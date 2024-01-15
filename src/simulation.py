@@ -24,7 +24,7 @@ from mocafe.fenut.fenut import get_colliding_cells_for_points
 from mocafe.math import project
 from mocafe.fenut.parameters import Parameters
 from mocafe.angie.tipcells import TipCellManager, load_tip_cells_from_json
-from mocafe.angie.forms import angiogenesis_form
+from mocafe.angie.forms import angiogenesis_form, angiogenesis_form_no_proliferation
 from mocafe.refine import nmm_interpolate
 import src.forms
 from src.ioutils import write_parameters, dump_json, move_files_once_per_node, rmtree_if_exists_once_per_node
@@ -67,8 +67,7 @@ def get_ureg_with_arbitrary_units(sim_parameters: Parameters):
     return local_ureg
 
 
-def compute_c0(spatial_dimension: int,
-               c_old: dolfinx.fem.Function,
+def compute_c0(c_old: dolfinx.fem.Function,
                egg_parameters: Dict,
                mesh_parameters: Parameters) -> None:
     """
@@ -168,13 +167,13 @@ def compute_mesh(spatial_dimension,
 
 class CAMSimulation:
     def __init__(self,
-                 spatial_dimension: int,
                  sim_parameters: Parameters,
                  egg_parameters: Dict,
                  out_folder_name: str = mansim.default_data_folder_name,
                  out_folder_mode: str = None,
                  sim_rationale: str = "No comment",
-                 slurm_job_id: int = None):
+                 slurm_job_id: int = None,
+                 spatial_dimension: int = 2):
         """
         Initialize a Simulation Object.
 
@@ -196,9 +195,11 @@ class CAMSimulation:
         self.sim_parameters: Parameters = sim_parameters  # simulation parameters
         self.egg_parameters: Dict = egg_parameters  # patient parameters
         self.lsp = {                                      # linear solver parameters
-            "ksp_type": "gmres",
-            "pc_type": "asm",
-            "ksp_monitor": None
+            "ksp_type": "cg",
+            "pc_type": "jacobi",
+            "ksp_monitor": None,
+            "ksp_atol": 1e-6,
+            "ksp_rtol": 1e-6
         }
 
         # proprieties
@@ -293,7 +294,7 @@ class CAMSimulation:
         Generate initial conditions not depending on from the simulaion parameters
         """
         # capillaries
-        compute_c0(self.spatial_dimension, self.c_old, self.egg_parameters, self.mesh_parameters)
+        compute_c0(self.c_old, self.egg_parameters, self.mesh_parameters)
 
         # t_c_f_function (dynamic tip cell position)
         logger.info(f"Computing t_c_f_function...")
@@ -440,7 +441,6 @@ class CAMSimulation:
 
 class CAMTimeSimulation(CAMSimulation):
     def __init__(self,
-                 spatial_dimension: int,
                  sim_parameters: Parameters,
                  egg_parameters: Dict,
                  steps: int,
@@ -450,7 +450,7 @@ class CAMTimeSimulation(CAMSimulation):
                  sim_rationale: str = "No comment",
                  slurm_job_id: int = None,
                  save_distributed_files_to: str or None = None,
-                 stop_with_zero_tc=True):
+                 spatial_dimension: int = 2):
         """
         Initialize a Simulation Object.
 
@@ -487,7 +487,6 @@ class CAMTimeSimulation(CAMSimulation):
         # specific flags
         self.__resumed: bool = False  # secret flag to check if simulation has been resumed
         self.save_distributed_files = (save_distributed_files_to is not None)  # Use PVD files instead of XDMF
-        self.stop_with_zero_tc = stop_with_zero_tc
 
         # specific folders
         if self.save_distributed_files:
@@ -672,8 +671,8 @@ class CAMTimeSimulation(CAMSimulation):
         v1, v2, v3 = ufl.TestFunctions(self.V)
         # build total form
         af_form = src.forms.angiogenic_factors_form_dt(af, self.af_old, self.ox, c, v1, self.sim_parameters)
-        capillaries_form = angiogenesis_form(
-            c, self.c_old, mu, self.mu_old, v2, v3, self.af_old, self.sim_parameters)
+        capillaries_form = angiogenesis_form_no_proliferation(
+            c, self.c_old, mu, self.mu_old, v2, v3, self.sim_parameters)
         form = af_form + capillaries_form
 
         # define problem
@@ -751,15 +750,14 @@ class CAMTimeSimulation(CAMSimulation):
             # save
             if ((step % self.save_rate == 0) or
                     (step == self.steps) or
-                    self.runtime_error_occurred or
-                    (self.stop_with_zero_tc and (n_tcs == 0))):
+                    self.runtime_error_occurred):
                 self._write_files(step)
 
             # update progress bar
             self.pbar.update(1)
 
             # if error occurred, stop iteration
-            if self.runtime_error_occurred or test_convergence or (self.stop_with_zero_tc and (n_tcs == 0)):
+            if self.runtime_error_occurred or test_convergence:
                 break
 
     def _end_simulation(self):

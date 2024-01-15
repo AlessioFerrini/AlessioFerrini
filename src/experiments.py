@@ -2,6 +2,9 @@ import json
 import time
 import logging
 import argparse
+from pathlib import Path
+from itertools import product
+from tqdm import tqdm
 import numpy as np
 import pandas as pd
 import dolfinx
@@ -33,10 +36,6 @@ def cli():
     parser.add_argument("-slurm_job_id",
                         type=int,
                         help="Slurm job ID for the simulation")
-    # add flag for test timulation
-    parser.add_argument("-run_2d",
-                        action="store_true",
-                        help="Run the simulation in 2d to check if everything runs smoothly")
     return parser.parse_args()
 
 
@@ -56,14 +55,12 @@ def preamble():
     with open("input_data/all_eggs_parameters.json", "r") as infile:
         patients_parameters = json.load(infile)
 
-    if args.run_2d:
-        spatial_dimension = 2
+    if args.slurm_job_id is None:
         distributed_data_folder = "temp"
     else:
-        spatial_dimension = 3
-        distributed_data_folder = "/local/frapra/3drh"
+        distributed_data_folder = "/local/frapra/cam"
 
-    return sim_parameters, patients_parameters, args.slurm_job_id, spatial_dimension, distributed_data_folder
+    return sim_parameters, patients_parameters, args.slurm_job_id, distributed_data_folder
 
 
 def oxygen_consumption_test():
@@ -135,13 +132,132 @@ def oxygen_consumption_test():
         outfile.write_function(ox)
 
 
-def compute_initial_conditions():
-    sim_parameters, eggs_parameters, slurm_job_id, spatial_dimension, distributed_data_folder = preamble()
+def test_convergence_1_step():
+    sim_parameters, eggs_parameters, slurm_job_id, distributed_data_folder = preamble()
 
     egg_code = "w1_d0_CTRL_H1"
 
-    sim = CAMTimeSimulation(spatial_dimension=2,
-                            sim_parameters=sim_parameters,
+    egg_parameters = eggs_parameters[egg_code]
+
+    sim = CAMTimeSimulation(sim_parameters=sim_parameters,
+                            egg_parameters=egg_parameters,
+                            steps=1,
+                            save_rate=10,
+                            out_folder_name=f"dolfinx_{egg_code}_preconditioners",
+                            out_folder_mode=None,
+                            sim_rationale="Testing",
+                            slurm_job_id=slurm_job_id,
+                            save_distributed_files_to=distributed_data_folder)
+
+    # set up the convergence test
+    sim.setup_convergence_test()
+
+    # setup list for storing performance
+    performance_dicts = []
+
+    # setup list of linear solver parameters to test
+    lsp_list = []
+
+    # --------------------------------------------------------------------------------------------------------------- #
+    # Add Iterative solvers to lsp list                                                                               #
+    # --------------------------------------------------------------------------------------------------------------- #
+    # create list of solver and preconditioners
+    iterative_solver_list = ["cg", "gmres"]
+    pc_type_list = ["jacobi", "bjacobi", "sor", "asm", "gasm", "gamg"]
+
+    # add all combinations to lsp list
+    lsp_list.extend([{"ksp_type": solver, "pc_type": pc, "ksp_monitor": None}
+                     for solver, pc in product(iterative_solver_list, pc_type_list)])
+
+    # add all combination using mumps as backend
+    lsp_list.extend([{"ksp_type": solver, "pc_type": pc, "ksp_monitor": None, "pc_factor_mat_solver_type": "mumps"}
+                     for solver, pc in product(iterative_solver_list, pc_type_list)])
+
+    # add hypre preconditioners
+    hypre_type_list = ["euclid", "pilut", "parasails", "boomeramg"]
+    lsp_list.extend([{"ksp_type": solver, "pc_type": "hypre", "pc_hypre_type": hypre_type, "ksp_monitor": None}
+                     for solver, hypre_type in product(iterative_solver_list, hypre_type_list)])
+
+    # --------------------------------------------------------------------------------------------------------------- #
+    # Add Direct solvers to lsp list                                                                                  #
+    # --------------------------------------------------------------------------------------------------------------- #
+    direct_solver_list = ["lu", "cholesky"]
+    lsp_list.extend([{"ksp_type": "preonly", "pc_type": ds, "ksp_monitor": None}
+                    for ds in direct_solver_list])
+    # add also with mumps
+    lsp_list.extend([{"ksp_type": "preonly", "pc_type": ds, "ksp_monitor": None, "pc_factor_mat_solver_type": "mumps"}
+                    for ds in direct_solver_list])
+
+    # --------------------------------------------------------------------------------------------------------------- #
+    # Iterate
+    # --------------------------------------------------------------------------------------------------------------- #
+    if MPI.COMM_WORLD.rank == 0:
+        pbar_file = open("convergence_pbar.o", "w")
+    else:
+        pbar_file = None
+    pbar = tqdm(total=len(lsp_list), ncols=100, desc="convergence_test", file=pbar_file,
+                disable=True if MPI.COMM_WORLD.rank != 0 else False)
+
+    for lsp in lsp_list:
+        # get characteristics of lsp
+        current_solver = lsp['ksp_type']
+        if lsp['pc_type'] == "hypre":
+            current_pc = f"{lsp['pc_type']} ({lsp['pc_hypre_type']})"
+        else:
+            current_pc = lsp['pc_type']
+        using_mumps = ("mumps" in lsp.values())
+
+        # logging
+        msg = f"Testing solver {current_solver} with pc {current_pc}"
+        if using_mumps:
+            msg += f" (MUMPS)"
+        logger.info(msg)
+
+        # set linear solver parameters
+        sim.lsp = lsp
+
+        # time solution
+        time0 = time.perf_counter()
+        sim.test_convergence()
+        tot_time = time.perf_counter() - time0
+
+        # check if error occurred
+        error = sim.runtime_error_occurred
+        error_msg = sim.error_msg
+
+        # build performance dict
+        perf_dict = {
+            "solver": current_solver,
+            "pc": current_pc,
+            "mumps": using_mumps,
+            "time": tot_time,
+            "error": error,
+            "error_msg": error_msg
+        }
+
+        # append dict to list
+        performance_dicts.append(perf_dict)
+        df = pd.DataFrame(performance_dicts)
+        if MPI.COMM_WORLD.rank == 0:
+            df.to_csv(sim.data_folder / Path("performance.csv"))
+
+        # reset runtime error and error msg
+        sim.runtime_error_occurred = False
+        sim.error_msg = None
+
+        # update pbar
+        pbar.update(1)
+
+    if MPI.COMM_WORLD.rank == 0:
+        pbar_file.close()
+
+
+def compute_initial_conditions():
+    sim_parameters, eggs_parameters, slurm_job_id, distributed_data_folder = preamble()
+
+    egg_code = "w1_d0_CTRL_H1"
+
+    sim = CAMTimeSimulation(sim_parameters=sim_parameters,
                             egg_parameters=eggs_parameters["w1_d0_CTRL_H1"],
                             steps=0,
                             out_folder_name=f"{egg_code}_initial_condition")
@@ -149,14 +265,13 @@ def compute_initial_conditions():
 
 
 def vascular_sprouting():
-    sim_parameters, eggs_parameters, slurm_job_id, spatial_dimension, distributed_data_folder = preamble()
+    sim_parameters, eggs_parameters, slurm_job_id, distributed_data_folder = preamble()
 
     egg_code = "w1_d0_CTRL_H1"
 
-    sim = CAMTimeSimulation(spatial_dimension=2,
-                            sim_parameters=sim_parameters,
+    sim = CAMTimeSimulation(sim_parameters=sim_parameters,
                             egg_parameters=eggs_parameters["w1_d0_CTRL_H1"],
                             steps=N_STEPS_2_DAYS,
-                            out_folder_name=f"{egg_code}_vascular_sprouting_2days",
+                            out_folder_name=f"{egg_code}_vascular_sprouting_2days_no_prolif",
                             save_distributed_files_to=distributed_data_folder)
     sim.run()
