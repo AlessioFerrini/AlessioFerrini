@@ -4,3 +4,7 @@ sif
 saved_sim
 input_data/d0
 __pycache__/
+*.o
+*.e
+*/.ipynb_checkpoints
+*/__pycache__
