@@ -1,7 +1,9 @@
 import logging
 import numpy as np
 from pathlib import Path, PurePath
-from skimage import io, morphology, color
+from typing import List
+from skimage import color, io
+import skimage.morphology as morphology
 from skimage.measure import regionprops, label
 
 
@@ -9,12 +11,12 @@ from skimage.measure import regionprops, label
 logger = logging.getLogger(__name__)
 
 
-def load_mask(mask: np.ndarray or Path or str, dtype=np.uint8) -> np.ndarray:
+def load_mask(mask: np.ndarray or Path or str) -> np.ndarray:
     """
-    Load an image represinting a binary mask
+    Load a mask image (a segmentation ora focus area) and its intermediate values. Returns an array
+    with only values 0 and 255.
 
     :param mask: input mask
-    :param dtype: type of output array
     :return:
     """
 
@@ -43,7 +45,7 @@ def load_mask(mask: np.ndarray or Path or str, dtype=np.uint8) -> np.ndarray:
     # removes shades
     mask_array = 255 * (mask_array > 0)
     # convert to uint8
-    mask_array = mask_array.astype(dtype)
+    mask_array = mask_array.astype(np.uint8)
 
     return mask_array
 
@@ -367,3 +369,83 @@ def compute_mean_radius(input_segmentation: np.ndarray or Path or str,
     all_radiuses = dt[dt > 0]
     # return median
     return np.mean(all_radiuses)
+
+
+def compute_angiometrics(input_segmentation: np.ndarray or Path or str,
+                         interest_zone: np.ndarray or Path or str or None = None,
+                         is_interest_zone_reverse: bool = True,
+                         include_angiometrics: List[str] or None = None):
+    """
+    Compute all angiometrics for the given segmentation. Returns a dictionary of all angiometrics.
+    Currently contains:
+    * vf (volume fraction)
+    * bpa (branches per area)
+    * bpl (branches per length)
+    * median_radius
+    * max_radius
+    * mean_radius
+    * vd (vascularization degree, as defined in Maugeri et al.)
+    * nlpa (network length per area)
+    * ia (interest area)
+    * 1/ia (inverse of interest area)
+
+    :param input_segmentation:
+    :param interest_zone:
+    :param is_interest_zone_reverse:
+    :param include_angiometrics:
+    :return:
+    """
+
+    # compute inverse area
+    ia = compute_interest_area(interest_zone, is_interest_zone_reverse)
+
+    # check if include_angiometrics is None
+    if include_angiometrics is None:
+        # if True, compute all angiometrics
+        angiometrics_dict = {
+            "vf": volume_fraction(input_segmentation, interest_zone, is_interest_zone_reverse),
+            "bpa": branches_per_area(input_segmentation, interest_zone, is_interest_zone_reverse),
+            "bpl": branches_per_length(input_segmentation, interest_zone, is_interest_zone_reverse),
+            "median_radius": compute_median_radius(input_segmentation, interest_zone, is_interest_zone_reverse),
+            "max_radius": compute_max_radius(input_segmentation, interest_zone, is_interest_zone_reverse),
+            "mean_radius": compute_mean_radius(input_segmentation, interest_zone, is_interest_zone_reverse),
+            "vd": vascularization_degree(input_segmentation, interest_zone, is_interest_zone_reverse),
+            "ia": ia,
+            "1/ia": 1 / ia,
+            "nlpa": network_length_per_area(input_segmentation, interest_zone, is_interest_zone_reverse)
+        }
+    else:
+        # compute each of the included angiometrics
+        angiometrics_dict = {}
+        if "vf" in include_angiometrics:
+            angiometrics_dict["vf"] = volume_fraction(input_segmentation, interest_zone, is_interest_zone_reverse)
+        if "bpa" in include_angiometrics:
+            angiometrics_dict["bpa"] = branches_per_area(input_segmentation, interest_zone, is_interest_zone_reverse)
+        if "bpl" in include_angiometrics:
+            angiometrics_dict["bpl"] = branches_per_length(input_segmentation, interest_zone, is_interest_zone_reverse)
+        if "median_radius" in include_angiometrics:
+            angiometrics_dict["median_radius"] = compute_median_radius(input_segmentation,
+                                                                       interest_zone,
+                                                                       is_interest_zone_reverse)
+        if "max_radius" in include_angiometrics:
+            angiometrics_dict["max_radius"] = compute_max_radius(input_segmentation,
+                                                                 interest_zone,
+                                                                 is_interest_zone_reverse)
+        if "mean_radius" in include_angiometrics:
+            angiometrics_dict["mean_radius"] = compute_mean_radius(input_segmentation,
+                                                                   interest_zone,
+                                                                   is_interest_zone_reverse)
+        if "vd" in include_angiometrics:
+            angiometrics_dict["vd"] = vascularization_degree(input_segmentation,
+                                                             interest_zone,
+                                                             is_interest_zone_reverse)
+        if "ia" in include_angiometrics:
+            angiometrics_dict["ia"] = ia
+        if "1/ia" in include_angiometrics:
+            angiometrics_dict["1/ia"] = 1 / ia
+        if "nlpa" in include_angiometrics:
+            angiometrics_dict["nlpa"] = network_length_per_area(input_segmentation,
+                                                                interest_zone,
+                                                                is_interest_zone_reverse)
+
+    return angiometrics_dict

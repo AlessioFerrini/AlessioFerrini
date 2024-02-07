@@ -1,10 +1,13 @@
 import sys
 import socket
 import logging
+import dolfinx
 from mpi4py import MPI
 import src.experiments
+import src.postprocessing
 
 # set up logger
+# dolfinx.log.set_log_level(dolfinx.log.LogLevel.INFO)
 rank = MPI.COMM_WORLD.rank
 ch = logging.StreamHandler(stream=sys.stdout)
 ch.setLevel(logging.DEBUG)
@@ -17,7 +20,7 @@ logging.root.addHandler(ch)  # adding my handler
 logging.root.setLevel(logging.DEBUG)  # setting root logger level
 
 def main():
-    src.experiments.vascular_sprouting()
+    src.postprocessing.compose_angiometric_csv()
 
 if __name__ == "__main__":
     main()

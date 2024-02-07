@@ -1,14 +1,14 @@
 {
   "w1_d0_CTRL_H1": {
     "egg": "w1_d0_CTRL_H1",
-    "pic2d": "input_data/d0/w1_d0_CTRL_H1_foto1_1x.ikosa.segmentation.crop500.png",
+    "pic2d": "input_data/d0/w1_d0_CTRL_H1_foto1_1x.ikosa.segmentation.crop250.png",
     "simulation_box": {
       "Lx": {
-        "value": 3.16,
+        "value": 1.58,
         "mu": "mm"
       },
       "Ly": {
-        "value": 3.16,
+        "value": 1.58,
         "mu": "mm"
       }
     }

@@ -19,7 +19,7 @@ from src.simulation import CAMTimeSimulation
 
 logger = logging.getLogger(__name__)
 
-N_STEPS_2_DAYS = 111
+N_STEPS_2_DAYS = 110
 
 
 def timer(py_func):
@@ -264,14 +264,98 @@ def compute_initial_conditions():
     sim.run()
 
 
+def test_convergence_parameters():
+    sim_parameters, eggs_parameters, slurm_job_id, distributed_data_folder = preamble()
+
+    egg_code = "w1_d0_CTRL_H1"
+
+    # get sim parameters dataframe
+    sim_parameters_df = sim_parameters.as_dataframe()
+
+    # set parameters to test
+    V_pH_af_min = float(sim_parameters_df.loc["V_pH_af", "sim_range_min"])
+    V_pH_af_max = float(sim_parameters_df.loc["V_pH_af", "sim_range_max"])
+    V_pH_af_range = np.logspace(start=np.log(V_pH_af_min), stop=np.log(V_pH_af_max), num=4, endpoint=True)
+    V_uc_af_min = float(sim_parameters.get_value("V_d_af"))
+    V_uc_af_range = np.logspace(start=0, stop=3, num=4, endpoint=True) * V_uc_af_min
+    epsilon_range = np.logspace(start=-1, stop=1, num=3, endpoint=True) * float(sim_parameters.get_value("epsilon"))
+    alpha_pc_range = np.logspace(start=-4, stop=0, num=5, endpoint=True) * float(sim_parameters.get_value("alpha_pc"))
+    M_range = np.logspace(start=-1, stop=1, num=3, endpoint=True) * float(sim_parameters.get_value("M"))
+
+    # do product to test all possible combinations
+    combinations = list(product(V_pH_af_range, V_uc_af_range, epsilon_range, alpha_pc_range, M_range))
+
+    # set pbar
+    if MPI.COMM_WORLD.rank == 0:
+        pbar_file = open("convergence_pbar.o", "w")
+    else:
+        pbar_file = None
+    pbar = tqdm(total=len(combinations), ncols=100, desc="convergence_test", file=pbar_file,
+                disable=True if MPI.COMM_WORLD.rank != 0 else False)
+
+    # set dict to hold errors
+    out = []
+
+    for sim_i, (V_pH_af_val, V_uc_af_val, epsilon_val, alpha_pc_val, M_val) in enumerate(combinations):
+        # set parameters
+        sim_parameters.set_value("V_pH_af", V_pH_af_val)
+        sim_parameters.set_value("V_uc_af", V_uc_af_val)
+        sim_parameters.set_value("epsilon", epsilon_val)
+        sim_parameters.set_value("alpha_pc", alpha_pc_val)
+        sim_parameters.set_value("M", M_val)
+
+        # generate sim object
+        sim = CAMTimeSimulation(sim_parameters=sim_parameters,
+                                egg_parameters=eggs_parameters["w1_d0_CTRL_H1"],
+                                slurm_job_id=slurm_job_id,
+                                steps=N_STEPS_2_DAYS,
+                                save_rate=int(np.floor(N_STEPS_2_DAYS / 2)),
+                                out_folder_name=f"{egg_code}_2days_{str(sim_i).zfill(3)}",
+                                sim_rationale=f"Testing combination: "
+                                              f"V_pH_af: {V_pH_af_val}; V_uc_af: {V_uc_af_val}; epsilon: {epsilon_val}"
+                                              f"alpha_pc: {alpha_pc_val}; M: {M_val}",
+                                save_distributed_files_to=distributed_data_folder)
+        # run
+        sim.run()
+
+        # generate sim dictionary
+        sim_dict = {
+            "sim_i": sim_i,
+            "V_pH_af": V_pH_af_val,
+            "V_uc_af": V_uc_af_val,
+            "epsilon": epsilon_val,
+            "alpha_pc": alpha_pc_val,
+            "M": M_val,
+            "ERROR": sim.runtime_error_occurred,
+            "Error msg": sim.error_msg
+        }
+
+        # append to out
+        out.append(sim_dict)
+
+        # update pbar
+        pbar.update(1)
+
+
+    # at the end, close files and save the out
+    if MPI.COMM_WORLD.rank == 0:
+        pbar_file.close()
+        pd.DataFrame(out).to_csv("convergence_2days.csv", index=False)
+
+
 def vascular_sprouting():
     sim_parameters, eggs_parameters, slurm_job_id, distributed_data_folder = preamble()
 
     egg_code = "w1_d0_CTRL_H1"
 
-    sim = CAMTimeSimulation(sim_parameters=sim_parameters,
-                            egg_parameters=eggs_parameters["w1_d0_CTRL_H1"],
-                            steps=N_STEPS_2_DAYS,
-                            out_folder_name=f"{egg_code}_vascular_sprouting_2days_no_prolif",
-                            save_distributed_files_to=distributed_data_folder)
-    sim.run()
+    alpha_p_range = np.logspace(start=-4, stop=0, num=5, endpoint=True) * float(sim_parameters.get_value("alpha_p"))
+
+    for alpha_p_value in [alpha_p_range[-1]]:
+        sim = CAMTimeSimulation(sim_parameters=sim_parameters,
+                                egg_parameters=eggs_parameters["w1_d0_CTRL_H1"],
+                                slurm_job_id=slurm_job_id,
+                                steps=N_STEPS_2_DAYS,
+                                save_rate=int(np.floor(N_STEPS_2_DAYS/2)),
+                                out_folder_name=f"{egg_code}_vascular_sprouting_2days_alpha_p={alpha_p_value:.5g}",
+                                save_distributed_files_to=distributed_data_folder)
+        sim.run()

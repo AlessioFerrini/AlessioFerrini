@@ -1,6 +1,7 @@
 """
 Contains methods and classes to run and resume simulations in 2D and 3D
 """
+import json
 import sys
 import time
 import shutil
@@ -29,6 +30,8 @@ from mocafe.refine import nmm_interpolate
 import src.forms
 from src.ioutils import write_parameters, dump_json, move_files_once_per_node, rmtree_if_exists_once_per_node
 from src.expressions import VesselReconstruction
+from src.angiometrics import compute_angiometrics
+from skimage import io
 
 # MPI variables
 comm_world = MPI.COMM_WORLD
@@ -122,10 +125,10 @@ def compute_mesh(spatial_dimension,
 
     # compute nx and ny based on R_c size
     R_c: float = sim_parameters.get_value('R_c')
-    nx: int = int(np.floor(Lx / (R_c * 0.7)))
-    ny: int = int(np.floor(Ly / (R_c * 0.7)))
+    nx: int = int(np.floor(Lx / (R_c * 0.5)))
+    ny: int = int(np.floor(Ly / (R_c * 0.5)))
     if spatial_dimension == 3:
-        nz: int = int(np.floor(Lz / (R_c * 0.7)))
+        nz: int = int(np.floor(Lz / (R_c * 0.5)))
         n = [nx, ny, nz]
     else:
         nz = 0
@@ -195,8 +198,8 @@ class CAMSimulation:
         self.sim_parameters: Parameters = sim_parameters  # simulation parameters
         self.egg_parameters: Dict = egg_parameters  # patient parameters
         self.lsp = {                                      # linear solver parameters
-            "ksp_type": "cg",
-            "pc_type": "jacobi",
+            "ksp_type": "gmres",
+            "pc_type": "asm",
             "ksp_monitor": None,
             "ksp_atol": 1e-6,
             "ksp_rtol": 1e-6
@@ -323,7 +326,7 @@ class CAMSimulation:
         project(ufl.grad(self.af_old), target_func=self.grad_af_old)
 
         # define tip cell manager
-        self.tip_cell_manager = TipCellManager(self.mesh, sim_parameters)
+        self.tip_cell_manager = TipCellManager(self.mesh, sim_parameters, n_checkpoints=30)
 
     def __compute_af0(self, sim_parameters: Parameters, options: Dict = None):
         """
@@ -370,6 +373,62 @@ class CAMSimulation:
         A.destroy()
         b.destroy()
         ksp.destroy()
+
+    def _get_angiometrics_for_c(self):
+        """
+        Convert self.c_old to a 2D matrix (image of the field).
+        :return:
+        """
+        # get a collapsed version of c_old
+        collapsed_c_old = self.c_old.collapse()
+        # get number of vertices owned by this process
+        n_vertices = collapsed_c_old.x.index_map.size_local
+        # get x and y coordinates
+        x = collapsed_c_old.function_space.tabulate_dof_coordinates()[:n_vertices, 0]
+        y = collapsed_c_old.function_space.tabulate_dof_coordinates()[:n_vertices, 1]
+        # convert to float32 precision (the precision of the mesh generation in FEniCS)
+        x = x.astype(np.float32)
+        y = y.astype(np.float32)
+        # get c values
+        c_values = collapsed_c_old.x.array[:n_vertices]
+
+        # create a matrix of shape (n_vertices, 3) where:
+        # - the first column is the x coordinate
+        # - the second column is the y coordinate
+        # - the third column are the calues associated to each coordinate
+        fields_dtype = [('x', float), ('y', float), ('c', float)]
+        tab_matrix = np.array([x_y_c for x_y_c in zip(x, y, c_values)],
+                              dtype=fields_dtype)
+
+        # gather tab_matrices on process 0
+        tab_matrices = MPI.COMM_WORLD.gather(tab_matrix, 0)
+        if MPI.COMM_WORLD.rank == 0:
+            # init global tab matrix
+            global_tab_matrix = tab_matrices[0]
+            # stack tab matrices on the global matrix
+            for i in range(1, len(tab_matrices)):
+                global_tab_matrix = np.hstack((global_tab_matrix, tab_matrices[i]))
+            # sort matrix according to fields: sort for x; if x is equal, sort for y.
+            global_tab_matrix = np.sort(global_tab_matrix, order=['x', 'y'])
+            print(global_tab_matrix)
+            # get matrix
+            nx = int(self.mesh_parameters.get_value("nx"))
+            ny = int(self.mesh_parameters.get_value("ny"))
+            capillaries_matrix = global_tab_matrix['c'].reshape((nx + 1, ny + 1))
+            capillaries_matrix = capillaries_matrix > 0
+            # remove borders close to 0 (sometimes, when one of the coordinates is close to 0 but negative, I get a
+            # an unexpected value)
+            capillaries_matrix = capillaries_matrix[1:, 1:]
+            # compute angiometrics
+            angiometrics = compute_angiometrics(capillaries_matrix,
+                                                include_angiometrics=["vf", "bpa", "bpl", "median_radius"])
+        else:
+            angiometrics = None
+
+        # bcast
+        angiometrics = comm_world.bcast(angiometrics, 0)
+        return angiometrics
+
 
     def _get_c_locator(self):
         """
@@ -483,6 +542,7 @@ class CAMTimeSimulation(CAMSimulation):
         # specific properties
         self.steps: int = steps  # simulations steps
         self.save_rate: int = save_rate  # set how often writes the output
+        self.angiometics_list: list = []
 
         # specific flags
         self.__resumed: bool = False  # secret flag to check if simulation has been resumed
@@ -530,6 +590,8 @@ class CAMTimeSimulation(CAMSimulation):
         self._generate_initial_conditions()  # generate initial condition
 
         self._write_files(0, write_mesh=True)  # write initial conditions
+
+        self._angiometrics_snapshot(0)  # store angiometrics
 
         self._time_iteration()  # run simulation in time
 
@@ -580,7 +642,6 @@ class CAMTimeSimulation(CAMSimulation):
         super()._generate_sim_parameters_dependent_initial_conditions(self.sim_parameters)
 
     def _write_files(self, t: int, write_mesh: bool = False):
-
         for fun, name, f_file in zip([self.af_old, self.c_old, self.grad_af_old, self.ox, self.t_c_f_function],
                                      ["af", "c", "grad_af", "ox", "tipcells"],
                                      [self.af_file, self.c_file, self.grad_af_file, self.ox_file, self.tipcells_file]):
@@ -633,6 +694,15 @@ class CAMTimeSimulation(CAMSimulation):
         n_tcs = len(self.tip_cell_manager.get_global_tip_cells_list())
         logger.info(f"Step {0} | n tc = {n_tcs}")
 
+    def _angiometrics_snapshot(self, t: float):
+        # compute angiometrics
+        current_angiometrics = self._get_angiometrics_for_c()
+        # add time to angiometrics
+        current_angiometrics["time"] = t
+        # save to list
+        self.angiometics_list.append(current_angiometrics)
+
+
     def _one_step_solve(self):
         # define solver
         self.solver = NewtonSolver(comm_world, self.problem)
@@ -671,8 +741,8 @@ class CAMTimeSimulation(CAMSimulation):
         v1, v2, v3 = ufl.TestFunctions(self.V)
         # build total form
         af_form = src.forms.angiogenic_factors_form_dt(af, self.af_old, self.ox, c, v1, self.sim_parameters)
-        capillaries_form = angiogenesis_form_no_proliferation(
-            c, self.c_old, mu, self.mu_old, v2, v3, self.sim_parameters)
+        capillaries_form = angiogenesis_form(
+            c, self.c_old, mu, self.mu_old, v2, v3, self.af_old, self.sim_parameters)
         form = af_form + capillaries_form
 
         # define problem
@@ -730,7 +800,11 @@ class CAMTimeSimulation(CAMSimulation):
             # solve
             logger.debug(f"Solving problem...")
             try:
-                self.solver.solve(u)
+                n_iterations, converged = self.solver.solve(u)
+                if n_iterations == 0:
+                    raise RuntimeError(f"NewtonSolver converged in 0 iterations")
+                if not converged:
+                    raise RuntimeError(f"NewtonSolver didn't converge")
             except RuntimeError as e:
                 # store error info
                 self.runtime_error_occurred = True
@@ -752,6 +826,7 @@ class CAMTimeSimulation(CAMSimulation):
                     (step == self.steps) or
                     self.runtime_error_occurred):
                 self._write_files(step)
+                self._angiometrics_snapshot(t)
 
             # update progress bar
             self.pbar.update(1)
@@ -767,6 +842,11 @@ class CAMTimeSimulation(CAMSimulation):
         self.grad_af_file.close()
         self.tipcells_file.close()
         self.ox_file.close()
+
+        # store angiometrics
+        if rank == 0:
+            with open(self.report_folder / Path("angiometrics.json"), "w") as outfile:
+                json.dump(self.angiometics_list, outfile, indent=2)
 
         # mv distributed files to data folder
         if self.save_distributed_files:

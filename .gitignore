@@ -2,9 +2,10 @@ misc
 .idea
 sif
 saved_sim
+out_postprocessing
+temp
 input_data/d0
-__pycache__/
+__pycache__
 *.o
 *.e
 */.ipynb_checkpoints
-*/__pycache__
