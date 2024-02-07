@@ -275,7 +275,7 @@ def test_convergence_parameters():
     # set parameters to test
     V_pH_af_min = float(sim_parameters_df.loc["V_pH_af", "sim_range_min"])
     V_pH_af_max = float(sim_parameters_df.loc["V_pH_af", "sim_range_max"])
-    V_pH_af_range = np.logspace(start=np.log(V_pH_af_min), stop=np.log(V_pH_af_max), num=4, endpoint=True)
+    V_pH_af_range = np.logspace(start=np.log10(V_pH_af_min), stop=np.log10(V_pH_af_max), num=4, endpoint=True)
     V_uc_af_min = float(sim_parameters.get_value("V_d_af"))
     V_uc_af_range = np.logspace(start=0, stop=3, num=4, endpoint=True) * V_uc_af_min
     epsilon_range = np.logspace(start=-1, stop=1, num=3, endpoint=True) * float(sim_parameters.get_value("epsilon"))
