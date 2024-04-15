@@ -264,7 +264,7 @@ def compute_initial_conditions():
     sim.run()
 
 
-def test_convergence_parameters():
+def sprouting_for_parameters_sampling():
     sim_parameters, eggs_parameters, slurm_job_id, distributed_data_folder = preamble()
 
     egg_code = "w1_d0_CTRL_H1"

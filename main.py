@@ -20,7 +20,7 @@ logging.root.addHandler(ch)  # adding my handler
 logging.root.setLevel(logging.DEBUG)  # setting root logger level
 
 def main():
-    src.postprocessing.compose_angiometric_csv()
+    src.postprocessing.visualize_parameter_influence_on_angioparameters()
 
 if __name__ == "__main__":
     main()
