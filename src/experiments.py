@@ -31,6 +31,10 @@ def timer(py_func):
 
 
 def cli():
+    """
+    CLI: Command Line Interface
+
+    """
     parser = argparse.ArgumentParser(description="Simple CLI for RH simulations")
     # add slurm_job_id
     parser.add_argument("-slurm_job_id",
@@ -51,7 +55,7 @@ def preamble():
     # get cli args, if any
     args = cli()
 
-    # load patient parameters
+    # load eggs parameters
     with open("input_data/all_eggs_parameters.json", "r") as infile:
         patients_parameters = json.load(infile)
 

@@ -294,7 +294,7 @@ class CAMSimulation:
 
     def _generate_sim_parameters_independent_initial_conditions(self):
         """
-        Generate initial conditions not depending on from the simulaion parameters
+        Generate initial conditions not depending on the simulation parameters
         """
         # capillaries
         compute_c0(self.c_old, self.egg_parameters, self.mesh_parameters)
@@ -308,7 +308,7 @@ class CAMSimulation:
 
     def _generate_sim_parameters_dependent_initial_conditions(self, sim_parameters):
         """
-        Generate initial conditions not depending on from the simulaion parameters
+        Generate initial conditions depending on the simulation parameters
         """
         # define initial condition for oxygen
         logger.info(f"Computing ox0...")
@@ -731,7 +731,7 @@ class CAMTimeSimulation(CAMSimulation):
             logger.error(str(e))
 
     def _time_iteration(self, test_convergence: bool = False):
-        # define weak form
+        ## Step 1: Define weak form
         logger.info(f"{self.out_folder_name}:Defining weak form...")
         u = dolfinx.fem.Function(self.V)
         u.x.array[:] = self.u_old.x.array
@@ -745,11 +745,11 @@ class CAMTimeSimulation(CAMSimulation):
             c, self.c_old, mu, self.mu_old, v2, v3, self.af_old, self.sim_parameters)
         form = af_form + capillaries_form
 
-        # define problem
+        ## Step 2: define problem
         logger.info(f"{self.out_folder_name}:Defining problem...")
         problem = dolfinx.fem.petsc.NonlinearProblem(form, u)
 
-        # define solver
+        ## Step 3: define solver
         self.solver = NewtonSolver(comm_world, problem)
         # Set Newton solver options
         self.solver.atol = 1e-6
@@ -764,7 +764,7 @@ class CAMTimeSimulation(CAMSimulation):
             opts[f"{option_prefix}{o}"] = v
         self.solver.krylov_solver.setFromOptions()
 
-        # init time iteration
+        ## Step 4: init time iteration
         t = self.t0
         dt = self.sim_parameters.get_value("dt")
 
