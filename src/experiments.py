@@ -48,7 +48,7 @@ def preamble():
     Load general data for simulations
     """
     # load simulation parameters
-    parameters_csv = "parameters/parameters.csv"
+    parameters_csv = "/home/alefer/github/cam_mocafe/parameters/parameters.csv"
     standard_parameters_df = pd.read_csv(parameters_csv, index_col="name")
     sim_parameters = Parameters(standard_parameters_df)
 
@@ -56,7 +56,7 @@ def preamble():
     args = cli()
 
     # load eggs parameters
-    with open("input_data/all_eggs_parameters.json", "r") as infile:
+    with open("/home/alefer/github/cam_mocafe/input_data/all_eggs_parameters.json", "r") as infile:
         patients_parameters = json.load(infile)
 
     if args.slurm_job_id is None:
@@ -74,7 +74,7 @@ def oxygen_consumption_test():
     :return: None
     """
     # import parameters
-    sim_parameters = Parameters(pd.read_csv("parameters/parameters.csv"))
+    sim_parameters = Parameters(pd.read_csv("/home/alefer/github/cam_mocafe/parameters/parameters.csv"))
 
     # define rectangular mesh
     Lx = Ly = 0.2
@@ -339,7 +339,7 @@ def sprouting_for_parameters_sampling():
 
         # update pbar
         pbar.update(1)
-
+        break
 
     # at the end, close files and save the out
     if MPI.COMM_WORLD.rank == 0:
