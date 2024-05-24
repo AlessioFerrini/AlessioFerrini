@@ -772,30 +772,33 @@ class CAMTimeSimulation(CAMSimulation):
 
         # log
         logger.info(f"{self.out_folder_name}:Starting time iteration...")
+
+        # Debug: correcting n_steps todo better solutions
+        finaltime = int(self.steps / dt)
         # iterate in time
-        for step in range(1, self.steps + 1):
+        for step in range(1, finaltime + 1):
             logger.info(f"Starting step {step}")
             # update time
             t += dt
 
             # activate tip cells
-            self.tip_cell_manager.activate_tip_cell(self.c_old, self.af_old, self.grad_af_old, step)
+            # self.tip_cell_manager.activate_tip_cell(self.c_old, self.af_old, self.grad_af_old, step)
 
             # revert tip cells
-            self.tip_cell_manager.revert_tip_cells(self.af_old, self.grad_af_old)
+            # self.tip_cell_manager.revert_tip_cells(self.af_old, self.grad_af_old)
 
             # move tip cells
-            self.tip_cell_manager.move_tip_cells(self.c_old, self.af_old, self.grad_af_old)
+            # self.tip_cell_manager.move_tip_cells(self.c_old, self.af_old, self.grad_af_old)
 
             # measure n_tcs
-            n_tcs = len(self.tip_cell_manager.get_global_tip_cells_list())
-            logger.info(f"Step {step} | n tc = {n_tcs}")
+            # n_tcs = len(self.tip_cell_manager.get_global_tip_cells_list())
+            # logger.info(f"Step {step} | n tc = {n_tcs}")
 
             # store tip cells in fenics function and json file
-            logger.debug(f"Saving incremental tip cells")
-            self.t_c_f_function = self.tip_cell_manager.get_latest_tip_cell_function()
-            self.t_c_f_function.x.scatter_forward()
-            self.tip_cell_manager.save_incremental_tip_cells(f"{self.report_folder}/incremental_tipcells.json", step)
+            # logger.debug(f"Saving incremental tip cells")
+            # self.t_c_f_function = self.tip_cell_manager.get_latest_tip_cell_function()
+            # self.t_c_f_function.x.scatter_forward()
+            # self.tip_cell_manager.save_incremental_tip_cells(f"{self.report_folder}/incremental_tipcells.json", step)
 
             # solve
             logger.debug(f"Solving problem...")
