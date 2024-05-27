@@ -14,5 +14,6 @@
       <PDataArray type="Float64" NumberOfComponents="3" />
     </PPoints>
     <Piece Source="ox_p0_000000.vtu" />
+    <Piece Source="ox_p1_000000.vtu" />
   </PUnstructuredGrid>
 </VTKFile>
