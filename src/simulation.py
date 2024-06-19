@@ -24,14 +24,19 @@ import mocafe.fenut.mansimdata as mansim
 from mocafe.fenut.fenut import get_colliding_cells_for_points
 from mocafe.math import project
 from mocafe.fenut.parameters import Parameters
+from mocafe.angie import af_sourcing
 from mocafe.angie.tipcells import TipCellManager, load_tip_cells_from_json
-from mocafe.angie.forms import angiogenesis_form, angiogenesis_form_no_proliferation
-from mocafe.refine import nmm_interpolate
+from mocafe.angie.forms import angiogenesis_form, angiogenesis_form_no_proliferation, angiogenic_factor_form
+from mocafe.angie.base_classes import ClockChecker
 import src.forms
 from src.ioutils import write_parameters, dump_json, move_files_once_per_node, rmtree_if_exists_once_per_node
 from src.expressions import VesselReconstruction
 from src.angiometrics import compute_angiometrics
 from skimage import io
+import math 
+import random
+import os
+
 
 # MPI variables
 comm_world = MPI.COMM_WORLD
@@ -176,7 +181,8 @@ class CAMSimulation:
                  out_folder_mode: str = None,
                  sim_rationale: str = "No comment",
                  slurm_job_id: int = None,
-                 spatial_dimension: int = 2):
+                 spatial_dimension: int = 2,
+                 regenerate_source_cells_positions: bool = False):
         """
         Initialize a Simulation Object.
 
@@ -193,6 +199,9 @@ class CAMSimulation:
         is "No comment".
         :param slurm_job_id: slurm job ID assigned to the simulation, if performed with slurm. It is used to generate a
         pbar stored in ``slurm/<slurm job ID>.pbar``.
+        :param regenerate_source_cells_positions: if True, regenerate the initial position of the source cells. The position of the source cells 
+        is computed the first time the simulation runs for a given CAM, and then it is stored in a cache folder. If this flag is False (default), 
+        the cached file will be used to set the initial TC position.
         """
         # parameters
         self.sim_parameters: Parameters = sim_parameters  # simulation parameters
@@ -213,6 +222,12 @@ class CAMSimulation:
         self.slurm_job_id: int = slurm_job_id  # slurm job id (if available)
         self.error_msg = None  # error message in case of simulation errors
         self.out_folder_name = out_folder_name
+
+        # proprieties related to source cells
+        self.source_cells_position_file = f"src_cells_positions/{egg_parameters['egg']}.npy"  # file containing source cells positions ADJUST ME AT YOUR WILL
+        self.n_source_cells = 300               # ADJUST ME AT YOUR WILL 
+        self.range_radius = 0.025               # ADJUST ME AT YOUR WILL
+        self.regenerate_source_cells_positions = regenerate_source_cells_positions
 
         # flags
         self.runtime_error_occurred = False  # flag to activate in case of sim errors
@@ -247,26 +262,18 @@ class CAMSimulation:
 
     def _fill_reproduce_folder(self):
         if rank == 0:
-            # patterns ignored when copying code after simulation
-            ignored_patterns = ["README.md",
-                                "saved_sim*",
-                                "*.ipynb_checkpoints*",
-                                "sif",
-                                "visualization",
-                                "*pycache*",
-                                ".thumbs",
-                                ".sim_cache",
-                                "jobids.txt",
-                                "slurm",
-                                "misc"]
-
             # if reproduce folder exists, remove it
             if self.reproduce_folder.exists():
                 shutil.rmtree(str(self.reproduce_folder.resolve()))
-            # copy all the code contained in reproduce folder
-            shutil.copytree(src=str(Path(__file__).parent.parent.resolve()),
-                            dst=str(self.reproduce_folder.resolve()),
-                            ignore=shutil.ignore_patterns(*ignored_patterns))
+            # get src folder
+            src_folder = Path(__file__).parent
+            # get main.py
+            main_script = Path(__file__).parent.parent / Path("main.py")
+            # copy src folder and main 
+            shutil.copytree(src=str(src_folder.resolve()),
+                            dst=str(self.reproduce_folder.resolve()))
+            shutil.copy(src=str(main_script.resolve()),
+                        dst=str(self.reproduce_folder.resolve()))
 
     def _generate_mesh(self):
         self.mesh, self.mesh_parameters = compute_mesh(self.spatial_dimension,
@@ -292,6 +299,49 @@ class CAMSimulation:
         self.u_old = dolfinx.fem.Function(self.V)
         self.af_old, self.c_old, self.mu_old = self.u_old.split()
 
+    def init_source_cells(self):
+        """
+        Explain here what I do
+        """
+        # Check position file existance
+        "Run the whole code in case source cells available positions aren't saved in a file yet"
+        if (not os.path.exists(self.source_cells_position_file)) or (self.regenerate_source_cells_positions):
+            
+            # 1)  Get random positions for source cells
+            #   Step 1: calculate the amount (n) of random point to start seeking for source cells feasible positions
+            Lx = self.mesh_parameters.get_value("Lx") 
+            Ly = self.mesh_parameters.get_value("Ly") 
+            R_c = self.sim_parameters.get_value("R_c") 
+            n = int((Lx * Ly) / (math.pi * (R_c**2)))
+            #   Step 2: get n random points in the mesh
+            x_coords = np.random.uniform(0, Lx, n)
+            y_coords = np.random.uniform(0, Ly, n)
+            source_cells_available_positions = np.column_stack((x_coords, y_coords, np.zeros(n)))
+            
+            # 2)  Skim random points close to capillaries, maintain points far from capillaries
+            #   Step 1: init and run Clockchecker to check capillary presence nearby random points (return True if so)
+            clock_checker = ClockChecker(self.mesh, self.range_radius, n_checkpoints=30)
+            clock_check_result = clock_checker.clock_check(source_cells_available_positions, self.c_old, lambda c_value: c_value > 0.)
+            #   Step 2: gather distant points (correspondi to False value in clock_check_result)
+            distant_source_cells_available_positions = source_cells_available_positions[~clock_check_result]
+
+            # 3)  Save the available positions for the source cells
+            "The positions are saved so that working on the same egg doesn't require continuos calculations of source cells positions"
+            np.save(self.source_cells_position_fileells_position_fileells_position_file, distant_source_cells_available_positions)
+
+            # 4)  Load positions and init source cells 
+            sources_points = random.sample(list(distant_source_cells_available_positions), self.n_source_cells)
+
+        else:
+            "if positions file already exists, just init source cells with those"
+            # Load positions and init source cells 
+            available_positions = np.load(self.source_cells_position_file)
+            sources_points = random.sample(list(available_positions), self.n_source_cells)
+
+        sources_map = af_sourcing.SourceMap(self.mesh, sources_points, self.sim_parameters, d=0.02)
+        self.sources_manager = af_sourcing.SourcesManager(sources_map, self.mesh, self.sim_parameters, d=0.02, T_min=0, T_s=1.)
+        
+
     def _generate_sim_parameters_independent_initial_conditions(self):
         """
         Generate initial conditions not depending on the simulation parameters
@@ -310,15 +360,11 @@ class CAMSimulation:
         """
         Generate initial conditions depending on the simulation parameters
         """
-        # define initial condition for oxygen
-        logger.info(f"Computing ox0...")
-        self.ox = dolfinx.fem.Function(self.subV0_collapsed)
-        self.ox_form = src.forms.ox_form_eq(self.ox, ufl.TestFunction(self.subV0_collapsed), sim_parameters)
-        self._compute_ox()
 
         # define initial condition for af
         logger.info(f"Computing af0...")
-        self.__compute_af0(sim_parameters)
+        self.af_old = dolfinx.fem.Function(self.subV0_collapsed)
+        self.sources_manager.apply_sources(self.af_old)
 
         # af gradient
         logger.info(f"Computing grad_af0...")
@@ -327,52 +373,6 @@ class CAMSimulation:
 
         # define tip cell manager
         self.tip_cell_manager = TipCellManager(self.mesh, sim_parameters, n_checkpoints=30)
-
-    def __compute_af0(self, sim_parameters: Parameters, options: Dict = None):
-        """
-        Solve equilibrium system for af considering the initial values of phi and c.
-
-        Basically, this function is used to generate the initial condition for af assuming that af is at equilibrium
-        at the beginning of the simulation.
-        """
-        # manage none dict
-        if options is None:
-            options = self.lsp
-        # get trial function
-        af = ufl.TrialFunction(self.subV0_collapsed)
-        # get test function
-        v = ufl.TestFunction(self.subV0_collapsed)
-        # built equilibrium form for af
-        af_form = src.forms.angiogenic_factors_form_eq(af, self.ox, self.c_old, v, sim_parameters)
-        af_form_a = dolfinx.fem.form(ufl.lhs(af_form))
-        af_form_L = dolfinx.fem.form(ufl.rhs(af_form))
-        # define operator
-        A = dolfinx.fem.petsc.assemble_matrix(af_form_a, bcs=[])
-        A.assemble()
-        # init solver
-        ksp = PETSc.KSP().create(comm_world)
-        # set solver options
-        opts = PETSc.Options()
-        for o, v in options.items():
-            opts[o] = v
-        ksp.setFromOptions()
-        # set operator
-        ksp.setOperators(A)
-        # define b
-        b = dolfinx.fem.petsc.assemble_vector(af_form_L)
-        dolfinx.fem.petsc.apply_lifting(b, [af_form_a], [[]])
-        b.ghostUpdate(addv=PETSc.InsertMode.ADD, mode=PETSc.ScatterMode.REVERSE)
-        # solve
-        sol = dolfinx.fem.Function(self.subV0_collapsed)
-        ksp.solve(b, sol.vector)
-        # interpolate solution on af_old
-        self.af_old.interpolate(sol)
-        self.af_old.x.scatter_forward()
-
-        # destroy object (workaround for issue: https://github.com/FEniCS/dolfinx/issues/2559)
-        A.destroy()
-        b.destroy()
-        ksp.destroy()
 
     def _get_angiometrics_for_c(self):
         """
@@ -441,29 +441,6 @@ class CAMSimulation:
             return c_values > 0.9
         return capillaries_locator
 
-    def _compute_ox(self):
-        # the capillaries are a stable source of oxygen.
-        # Thus, we set a Dirichlet BC in correspondence of the capillaries
-        cells_bc = dolfinx.mesh.locate_entities(self.mesh, self.mesh.topology.dim, self._get_c_locator())
-        dofs_bc = dolfinx.fem.locate_dofs_topological(self.subV0_collapsed, self.mesh.topology.dim, cells_bc)
-        bc = dolfinx.fem.dirichletbc(PETSc.ScalarType(1.), dofs_bc, self.subV0_collapsed)
-
-        # define problem
-        problem = dolfinx.fem.petsc.NonlinearProblem(self.ox_form, self.ox, bcs=[bc])
-
-        # define solver
-        lsp = {"ksp_type": "preonly", "pc_type": "lu"}
-        solver = NewtonSolver(MPI.COMM_WORLD, problem)
-        # set options for krylov solver
-        opts = PETSc.Options()
-        option_prefix = solver.krylov_solver.getOptionsPrefix()
-        for o, v in lsp.items():
-            opts[f"{option_prefix}{o}"] = v
-        solver.krylov_solver.setFromOptions()
-
-        # solve
-        solver.solve(self.ox)
-
     def _set_pbar(self, total: int):
         self.pbar = tqdm(total=total,
                          ncols=100,
@@ -497,7 +474,6 @@ class CAMSimulation:
         write_parameters(self.mesh_parameters, self.report_folder / Path("mesh_parameters.csv"))
         dump_json(self.egg_parameters, self.report_folder / Path("egg_parameters.json"))
 
-
 class CAMTimeSimulation(CAMSimulation):
     def __init__(self,
                  sim_parameters: Parameters,
@@ -509,7 +485,9 @@ class CAMTimeSimulation(CAMSimulation):
                  sim_rationale: str = "No comment",
                  slurm_job_id: int = None,
                  save_distributed_files_to: str or None = None,
-                 spatial_dimension: int = 2):
+                 spatial_dimension: int = 2,
+                 regenerate_source_cells_positions = False
+                 ):
         """
         Initialize a Simulation Object.
 
@@ -539,6 +517,8 @@ class CAMTimeSimulation(CAMSimulation):
                          sim_rationale=sim_rationale,
                          slurm_job_id=slurm_job_id)
 
+        self.local_ureg = get_ureg_with_arbitrary_units(sim_parameters)
+
         # specific properties
         self.steps: int = steps  # simulations steps
         self.save_rate: int = save_rate  # set how often writes the output
@@ -561,38 +541,43 @@ class CAMTimeSimulation(CAMSimulation):
             self.pvd_folder = pvd_folder
 
         # specific files
-        file_names = ["c", "af", "grad_af", "tipcells", "ox"]
+        file_names = ["c", "af", "grad_af", "tipcells"]
         if self.save_distributed_files:
             # specific PVD files
-            self.c_file, self.af_file, self.grad_af_file, self.tipcells_file, self.ox_file = \
+            self.c_file, self.af_file, self.grad_af_file, self.tipcells_file = \
                 [dolfinx.io.VTKFile(comm_world, str(self.distributed_data_folder / Path(f"{fn}.pvd")), "w")
                  for fn in file_names]
         else:
             # specific XDMF files
-            self.c_file, self.af_file, self.grad_af_file, self.tipcells_file, self.ox_file = \
+            logger.info("Start xdmf file")
+            self.c_file, self.af_file, self.grad_af_file, self.tipcells_file = \
                 [dolfinx.io.XDMFFile(comm_world, str(self.data_folder / Path(f"{fn}.xdmf")), "w")
                  for fn in file_names]
+        
 
     def run(self) -> bool:
         """
         Run simulation. Return True if a runtime error occurred, False otherwise.
         """
+        
         self._check_simulation_properties()  # Check class proprieties. Return error if something does not work.
-
+         
         self._sim_mkdir()  # create all simulation folders
-
+        
         self._fill_reproduce_folder()  # store current script in reproduce folder to keep track of the code
-
+         
         self._generate_mesh()  # generate mesh
-
+         
         self._spatial_discretization()  # initialize function space
+
+        self.init_source_cells()  # generate source cells
 
         self._generate_initial_conditions()  # generate initial condition
 
         self._write_files(0, write_mesh=True)  # write initial conditions
 
         self._angiometrics_snapshot(0)  # store angiometrics
-
+        
         self._time_iteration()  # run simulation in time
 
         self._end_simulation()  # conclude time iteration
@@ -642,9 +627,9 @@ class CAMTimeSimulation(CAMSimulation):
         super()._generate_sim_parameters_dependent_initial_conditions(self.sim_parameters)
 
     def _write_files(self, t: int, write_mesh: bool = False):
-        for fun, name, f_file in zip([self.af_old, self.c_old, self.grad_af_old, self.ox, self.t_c_f_function],
+        for fun, name, f_file in zip([self.af_old, self.c_old, self.grad_af_old, self.t_c_f_function],
                                      ["af", "c", "grad_af", "ox", "tipcells"],
-                                     [self.af_file, self.c_file, self.grad_af_file, self.ox_file, self.tipcells_file]):
+                                     [self.af_file, self.c_file, self.grad_af_file, self.tipcells_file]):
             # log
             logger.info(f"Writing {name} file...")
             # if necessary, write mesh
@@ -672,7 +657,9 @@ class CAMTimeSimulation(CAMSimulation):
         # define test functions
         v1, v2, v3 = ufl.TestFunctions(self.V)
         # build total form
-        af_form = src.forms.angiogenic_factors_form_dt(af, self.af_old, self.ox, c, v1, self.sim_parameters)
+        af_form = angiogenic_factor_form(af, self.af_old, c, v1, self.sim_parameters, 
+                                         alpha_T=self.sim_parameters.get_value("V_uc_af"), 
+                                         D=self.sim_parameters.get_value("D_af"))
         capillaries_form = angiogenesis_form(
             c, self.c_old, mu, self.mu_old, v2, v3, self.af_old, self.sim_parameters)
         form = af_form + capillaries_form
@@ -709,7 +696,7 @@ class CAMTimeSimulation(CAMSimulation):
         # Set Newton solver options
         self.solver.atol = 1e-6
         self.solver.rtol = 1e-6
-        self.solver.convergence_criterion = "incremental"
+        # self.solver.convergence_criterion = "incremental"
         self.solver.max_it = 100
         self.solver.report = True  # report iterations
 
@@ -737,10 +724,13 @@ class CAMTimeSimulation(CAMSimulation):
         u.x.array[:] = self.u_old.x.array
         # assign u_old to u
         af, c, mu = ufl.split(u)
-        # define test functions
+        # define test functionss
         v1, v2, v3 = ufl.TestFunctions(self.V)
         # build total form
-        af_form = src.forms.angiogenic_factors_form_dt(af, self.af_old, self.ox, c, v1, self.sim_parameters)
+        # af_form uguale a quella del tutorial (mocafe.angie.form.af_form)
+        af_form = angiogenic_factor_form(af, self.af_old, c, v1, self.sim_parameters, 
+                                         alpha_T=self.sim_parameters.get_value("V_uc_af"), 
+                                         D=self.sim_parameters.get_value("D_af"))
         capillaries_form = angiogenesis_form(
             c, self.c_old, mu, self.mu_old, v2, v3, self.af_old, self.sim_parameters)
         form = af_form + capillaries_form
@@ -754,7 +744,7 @@ class CAMTimeSimulation(CAMSimulation):
         # Set Newton solver options
         self.solver.atol = 1e-6
         self.solver.rtol = 1e-6
-        self.solver.convergence_criterion = "incremental"
+        # self.solver.convergence_criterion = "incremental"
         self.solver.max_it = 100
         self.solver.report = True  # report iterations
         # set options for krylov solver
@@ -767,7 +757,7 @@ class CAMTimeSimulation(CAMSimulation):
         ## Step 4: init time iteration
         t = self.t0
         dt = self.sim_parameters.get_value("dt")
-
+        logger.info("define problem")
         super()._set_pbar(total=self.steps)
 
         # log
@@ -777,6 +767,9 @@ class CAMTimeSimulation(CAMSimulation):
             logger.info(f"Starting step {step}")
             # update time
             t += dt
+
+            # turn off near sources
+            self.sources_manager.remove_sources_near_vessels(self.c_old)
 
             # activate tip cells
             self.tip_cell_manager.activate_tip_cell(self.c_old, self.af_old, self.grad_af_old, step)
@@ -821,6 +814,9 @@ class CAMTimeSimulation(CAMSimulation):
             # assign new value to phi
             self._compute_ox()
 
+            # update source field
+            self.sources_manager.apply_sources(self.af_old)
+
             # save
             if ((step % self.save_rate == 0) or
                     (step == self.steps) or
@@ -841,7 +837,6 @@ class CAMTimeSimulation(CAMSimulation):
         self.af_file.close()
         self.grad_af_file.close()
         self.tipcells_file.close()
-        self.ox_file.close()
 
         # store angiometrics
         if rank == 0:
@@ -855,6 +850,9 @@ class CAMTimeSimulation(CAMSimulation):
 
         super()._end_simulation()
 
+
+class CAMSquareSimulation:
+    pass
 
 # class RHAdaptiveSimulation(CAMTimeSimulation):
 #     def _solve_problem(self):
