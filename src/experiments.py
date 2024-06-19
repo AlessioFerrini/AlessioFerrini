@@ -15,7 +15,7 @@ from petsc4py import PETSc
 from mocafe.fenut.parameters import Parameters
 from mocafe.fenut.fenut import get_colliding_cells_for_points
 from src.forms import ox_form_eq
-from src.simulation import CAMTimeSimulation
+from src.simulation import CAMTimeSimulation, compute_c0, compute_mesh  # Import the required functions and classes
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +48,7 @@ def preamble():
     Load general data for simulations
     """
     # load simulation parameters
-    parameters_csv = "parameters/parameters.csv"
+    parameters_csv = "debugging_sim_413/sim_parameters_413.csv" #"/home/alefer/github/cam_mocafe/parameters/parameters.csv" 
     standard_parameters_df = pd.read_csv(parameters_csv, index_col="name")
     sim_parameters = Parameters(standard_parameters_df)
 
@@ -56,13 +56,14 @@ def preamble():
     args = cli()
 
     # load eggs parameters
-    with open("input_data/all_eggs_parameters.json", "r") as infile:
+    with open("/home/alefer/github/cam_mocafe/input_data/all_eggs_parameters.json", "r") as infile:
         patients_parameters = json.load(infile)
 
-    if args.slurm_job_id is None:
-        distributed_data_folder = "temp"
-    else:
-        distributed_data_folder = "/local/frapra/cam"
+    distributed_data_folder = "rc_413"#"first_calibration_round"
+    # if args.slurm_job_id is None:
+    #     distributed_data_folder = "temp"
+    # else:
+    #     distributed_data_folder = "/local/frapra/cam"
 
     return sim_parameters, patients_parameters, args.slurm_job_id, distributed_data_folder
 
@@ -74,7 +75,7 @@ def oxygen_consumption_test():
     :return: None
     """
     # import parameters
-    sim_parameters = Parameters(pd.read_csv("parameters/parameters.csv"))
+    sim_parameters = Parameters(pd.read_csv("/home/alefer/github/cam_mocafe/parameters/parameters.csv"))
 
     # define rectangular mesh
     Lx = Ly = 0.2
@@ -268,6 +269,62 @@ def compute_initial_conditions():
     sim.run()
 
 
+def run_sim_413():
+    # Inspired from sprouting from param sampling; load 413 param; 
+    sim_parameters, eggs_parameters, slurm_job_id, distributed_data_folder = preamble()
+    sim_parameters_path = "debugging_sim_413/sim_parameters_413.csv" #debugging_sim_413/sim_parameters_413.csv
+    egg_code = "w1_d0_CTRL_H1" 
+
+    # Load simulation parameters from CSV file
+    sim_parameters_df = pd.read_csv(sim_parameters_path, index_col='name')
+
+    # Set precise values for parameters from the CSV file
+    V_pH_af_val = float(sim_parameters_df.loc["V_pH_af", "sim_value"])
+    V_uc_af_val = float(sim_parameters_df.loc["V_uc_af", "sim_value"])
+    epsilon_val = float(sim_parameters_df.loc["epsilon", "sim_value"])
+    alpha_pc_val = float(sim_parameters_df.loc["alpha_pc", "sim_value"])
+    M_val = float(sim_parameters_df.loc["M", "sim_value"])
+    dt = 1
+
+    # Set parameters
+    sim_parameters.set_value("V_pH_af", V_pH_af_val)
+    sim_parameters.set_value("V_uc_af", V_uc_af_val)
+    sim_parameters.set_value("epsilon", epsilon_val)
+    sim_parameters.set_value("alpha_pc", alpha_pc_val)
+    sim_parameters.set_value("M", M_val)
+    sim_parameters.set_value("dt", dt)
+
+    # Generate sim object
+    sim = CAMTimeSimulation(sim_parameters=sim_parameters,
+                            egg_parameters=eggs_parameters["w1_d0_CTRL_H1"],
+                            slurm_job_id=slurm_job_id,
+                            steps=int(110 / dt),
+                            save_rate=1,  # modified to save one step
+                            out_folder_name=f"debugging_sim_413/sprouting_at_last",
+                            sim_rationale=f"Testing combination: "
+                                          f"V_pH_af: {V_pH_af_val}; V_uc_af: {V_uc_af_val}; epsilon: {epsilon_val}; "
+                                          f"alpha_pc: {alpha_pc_val}; M: {M_val}",
+                            save_distributed_files_to=distributed_data_folder)
+    
+    # Run simulation
+    sim.run()
+
+    # Generate sim dictionary
+    sim_dict = {
+        "sim_i": 0,
+        "V_pH_af": V_pH_af_val,
+        "V_uc_af": V_uc_af_val,
+        "epsilon": epsilon_val,
+        "alpha_pc": alpha_pc_val,
+        "M": M_val,
+        "ERROR": sim.runtime_error_occurred,
+        "Error msg": sim.error_msg
+    }
+
+    # Save the output
+    #if MPI.COMM_WORLD.rank == 0:
+    pd.DataFrame([sim_dict]).to_csv("convergence_2days_debugged.csv", index=False)
+
 def sprouting_for_parameters_sampling():
     sim_parameters, eggs_parameters, slurm_job_id, distributed_data_folder = preamble()
 
@@ -277,17 +334,25 @@ def sprouting_for_parameters_sampling():
     sim_parameters_df = sim_parameters.as_dataframe()
 
     # set parameters to test
+    # V_pH_af_min = float(sim_parameters_df.loc["V_pH_af", "sim_range_min"])
+    # V_pH_af_max = float(sim_parameters_df.loc["V_pH_af", "sim_range_max"])
+    # V_pH_af_range = np.logspace(start=np.log10(V_pH_af_min), stop=np.log10(V_pH_af_max), num=4, endpoint=True)
+    # V_uc_af_min = float(sim_parameters.get_value("V_d_af"))
+    # V_uc_af_range = np.logspace(start=0, stop=3, num=4, endpoint=True) * V_uc_af_min
+    # epsilon_range = np.logspace(start=-1, stop=1, num=3, endpoint=True) * float(sim_parameters.get_value("epsilon"))
+    # alpha_pc_range = np.logspace(start=-4, stop=0, num=5, endpoint=True) * float(sim_parameters.get_value("alpha_pc"))
+    # M_range = np.logspace(start=-1, stop=1, num=3, endpoint=True) * float(sim_parameters.get_value("M"))
     V_pH_af_min = float(sim_parameters_df.loc["V_pH_af", "sim_range_min"])
-    V_pH_af_max = float(sim_parameters_df.loc["V_pH_af", "sim_range_max"])
-    V_pH_af_range = np.logspace(start=np.log10(V_pH_af_min), stop=np.log10(V_pH_af_max), num=4, endpoint=True)
+    V_pH_af_max = float(5.84e-01)
+    V_pH_af_range = np.logspace(start=np.log10(V_pH_af_min), stop=np.log10(V_pH_af_max), num=3, endpoint=True)
     V_uc_af_min = float(sim_parameters.get_value("V_d_af"))
-    V_uc_af_range = np.logspace(start=0, stop=3, num=4, endpoint=True) * V_uc_af_min
-    epsilon_range = np.logspace(start=-1, stop=1, num=3, endpoint=True) * float(sim_parameters.get_value("epsilon"))
-    alpha_pc_range = np.logspace(start=-4, stop=0, num=5, endpoint=True) * float(sim_parameters.get_value("alpha_pc"))
-    M_range = np.logspace(start=-1, stop=1, num=3, endpoint=True) * float(sim_parameters.get_value("M"))
+    V_uc_af_range = np.logspace(start=2, stop=3, num=3, endpoint=True) * V_uc_af_min
+    alpha_pc_range = np.logspace(start=-3, stop=-1, num=3, endpoint=True) * float(sim_parameters.get_value("alpha_pc"))
+    M_range = np.logspace(start=0, stop=1, num=2, endpoint=True) * float(sim_parameters.get_value("M"))
 
     # do product to test all possible combinations
-    combinations = list(product(V_pH_af_range, V_uc_af_range, epsilon_range, alpha_pc_range, M_range))
+    # combinations = list(product(V_pH_af_range, V_uc_af_range, epsilon_range, alpha_pc_range, M_range))
+    combinations = list(product(V_pH_af_range, V_uc_af_range, alpha_pc_range, M_range))
 
     # set pbar
     if MPI.COMM_WORLD.rank == 0:
@@ -300,11 +365,11 @@ def sprouting_for_parameters_sampling():
     # set dict to hold errors
     out = []
 
-    for sim_i, (V_pH_af_val, V_uc_af_val, epsilon_val, alpha_pc_val, M_val) in enumerate(combinations):
+    for sim_i, (V_pH_af_val, V_uc_af_val, alpha_pc_val, M_val) in enumerate(combinations):
         # set parameters
         sim_parameters.set_value("V_pH_af", V_pH_af_val)
         sim_parameters.set_value("V_uc_af", V_uc_af_val)
-        sim_parameters.set_value("epsilon", epsilon_val)
+        # sim_parameters.set_value("epsilon", epsilon_val)
         sim_parameters.set_value("alpha_pc", alpha_pc_val)
         sim_parameters.set_value("M", M_val)
 
@@ -313,10 +378,10 @@ def sprouting_for_parameters_sampling():
                                 egg_parameters=eggs_parameters["w1_d0_CTRL_H1"],
                                 slurm_job_id=slurm_job_id,
                                 steps=N_STEPS_2_DAYS,
-                                save_rate=int(np.floor(N_STEPS_2_DAYS / 2)),
+                                save_rate=int(np.floor(N_STEPS_2_DAYS / 2)), 
                                 out_folder_name=f"{egg_code}_2days_{str(sim_i).zfill(3)}",
                                 sim_rationale=f"Testing combination: "
-                                              f"V_pH_af: {V_pH_af_val}; V_uc_af: {V_uc_af_val}; epsilon: {epsilon_val}"
+                                              f"V_pH_af: {V_pH_af_val}; V_uc_af: {V_uc_af_val};" # epsilon: {epsilon_val}
                                               f"alpha_pc: {alpha_pc_val}; M: {M_val}",
                                 save_distributed_files_to=distributed_data_folder)
         # run
@@ -327,7 +392,7 @@ def sprouting_for_parameters_sampling():
             "sim_i": sim_i,
             "V_pH_af": V_pH_af_val,
             "V_uc_af": V_uc_af_val,
-            "epsilon": epsilon_val,
+            # "epsilon": epsilon_val,
             "alpha_pc": alpha_pc_val,
             "M": M_val,
             "ERROR": sim.runtime_error_occurred,
@@ -339,7 +404,7 @@ def sprouting_for_parameters_sampling():
 
         # update pbar
         pbar.update(1)
-
+        # break
 
     # at the end, close files and save the out
     if MPI.COMM_WORLD.rank == 0:
@@ -355,7 +420,7 @@ def vascular_sprouting():
     alpha_p_range = np.logspace(start=-4, stop=0, num=5, endpoint=True) * float(sim_parameters.get_value("alpha_p"))
 
     for alpha_p_value in [alpha_p_range[-1]]:
-        sim = CAMTimeSimulation(sim_parameters=sim_parameters,
+        sim = CAMSimulation(sim_parameters=sim_parameters,
                                 egg_parameters=eggs_parameters["w1_d0_CTRL_H1"],
                                 slurm_job_id=slurm_job_id,
                                 steps=N_STEPS_2_DAYS,
