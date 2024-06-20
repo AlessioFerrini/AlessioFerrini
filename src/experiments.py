@@ -48,7 +48,7 @@ def preamble():
     Load general data for simulations
     """
     # load simulation parameters
-    parameters_csv = "debugging_sim_413/sim_parameters_413.csv" #"/home/alefer/github/cam_mocafe/parameters/parameters.csv" 
+    parameters_csv = "parameters/parameters.csv"
     standard_parameters_df = pd.read_csv(parameters_csv, index_col="name")
     sim_parameters = Parameters(standard_parameters_df)
 
@@ -56,14 +56,13 @@ def preamble():
     args = cli()
 
     # load eggs parameters
-    with open("/home/alefer/github/cam_mocafe/input_data/all_eggs_parameters.json", "r") as infile:
+    with open("input_data/all_eggs_parameters.json", "r") as infile:
         patients_parameters = json.load(infile)
 
-    distributed_data_folder = "rc_413"#"first_calibration_round"
-    # if args.slurm_job_id is None:
-    #     distributed_data_folder = "temp"
-    # else:
-    #     distributed_data_folder = "/local/frapra/cam"
+    if args.slurm_job_id is None:
+        distributed_data_folder = "temp"
+    else:
+        distributed_data_folder = "/local/frapra/cam"
 
     return sim_parameters, patients_parameters, args.slurm_job_id, distributed_data_folder
 
@@ -272,14 +271,14 @@ def compute_initial_conditions():
 def run_sim_413():
     # Inspired from sprouting from param sampling; load 413 param; 
     sim_parameters, eggs_parameters, slurm_job_id, distributed_data_folder = preamble()
-    sim_parameters_path = "debugging_sim_413/sim_parameters_413.csv" #debugging_sim_413/sim_parameters_413.csv
+    sim_parameters_path = "parameters/sim_parameters_413.csv" #debugging_sim_413/sim_parameters_413.csv
     egg_code = "w1_d0_CTRL_H1" 
 
     # Load simulation parameters from CSV file
     sim_parameters_df = pd.read_csv(sim_parameters_path, index_col='name')
 
     # Set precise values for parameters from the CSV file
-    V_pH_af_val = float(sim_parameters_df.loc["V_pH_af", "sim_value"])
+    # V_pH_af_val = float(sim_parameters_df.loc["V_pH_af", "sim_value"])
     V_uc_af_val = float(sim_parameters_df.loc["V_uc_af", "sim_value"])
     epsilon_val = float(sim_parameters_df.loc["epsilon", "sim_value"])
     alpha_pc_val = float(sim_parameters_df.loc["alpha_pc", "sim_value"])
@@ -287,7 +286,7 @@ def run_sim_413():
     dt = 1
 
     # Set parameters
-    sim_parameters.set_value("V_pH_af", V_pH_af_val)
+    # sim_parameters.set_value("V_pH_af", V_pH_af_val)
     sim_parameters.set_value("V_uc_af", V_uc_af_val)
     sim_parameters.set_value("epsilon", epsilon_val)
     sim_parameters.set_value("alpha_pc", alpha_pc_val)
@@ -298,11 +297,10 @@ def run_sim_413():
     sim = CAMTimeSimulation(sim_parameters=sim_parameters,
                             egg_parameters=eggs_parameters["w1_d0_CTRL_H1"],
                             slurm_job_id=slurm_job_id,
-                            steps=int(110 / dt),
+                            steps=int(1 / dt),
                             save_rate=1,  # modified to save one step
                             out_folder_name=f"debugging_sim_413/sprouting_at_last",
-                            sim_rationale=f"Testing combination: "
-                                          f"V_pH_af: {V_pH_af_val}; V_uc_af: {V_uc_af_val}; epsilon: {epsilon_val}; "
+                            sim_rationale=f"Testing combination: V_uc_af: {V_uc_af_val}; epsilon: {epsilon_val}; "
                                           f"alpha_pc: {alpha_pc_val}; M: {M_val}",
                             save_distributed_files_to=distributed_data_folder)
     
@@ -312,7 +310,6 @@ def run_sim_413():
     # Generate sim dictionary
     sim_dict = {
         "sim_i": 0,
-        "V_pH_af": V_pH_af_val,
         "V_uc_af": V_uc_af_val,
         "epsilon": epsilon_val,
         "alpha_pc": alpha_pc_val,
