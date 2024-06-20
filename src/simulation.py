@@ -339,7 +339,6 @@ class CAMSimulation:
         else:
             "if positions file already exists, just init source cells with those"
             # Load positions and init source cells 
-<<<<<<< Updated upstream
             sources_points = np.load(self.source_cells_position_file)
 
         sources_map = af_sourcing.SourceMap(self.mesh, sources_points, self.sim_parameters,
@@ -348,13 +347,6 @@ class CAMSimulation:
                                                           d=self.sim_parameters.get_value("source_cells_range"),
                                                           T_min=self.sim_parameters.get_value("af_min"),
                                                           T_s=self.sim_parameters.get_value("af_max"))
-=======
-            available_positions = np.load(self.source_cells_position_file)
-            sources_points = random.sample(list(available_positions), self.n_source_cells)
-
-        sources_map = af_sourcing.SourceMap(self.mesh, sources_points, self.sim_parameters, d=0.02)
-        self.sources_manager = af_sourcing.SourcesManager(sources_map, self.mesh, self.sim_parameters, d=0.02, T_min=0, T_s=10.)
->>>>>>> Stashed changes
         
 
     def _generate_sim_parameters_independent_initial_conditions(self):
@@ -825,11 +817,6 @@ class CAMTimeSimulation(CAMSimulation):
             self.af_old, self.c_old, self.mu_old = self.u_old.split()
             # assign new value to grad_af_old
             project(ufl.grad(self.af_old), target_func=self.grad_af_old)
-<<<<<<< Updated upstream
-=======
-            # assign new value to phi
-            # self._compute_ox()
->>>>>>> Stashed changes
 
             # update source field
             self.sources_manager.apply_sources(self.af_old)
