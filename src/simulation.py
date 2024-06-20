@@ -11,8 +11,7 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 from pathlib import Path
-from itertools import product
-from typing import Dict, List
+from typing import Dict
 from pint import Quantity, UnitRegistry
 import ufl
 import dolfinx
@@ -28,11 +27,9 @@ from mocafe.angie import af_sourcing
 from mocafe.angie.tipcells import TipCellManager, load_tip_cells_from_json
 from mocafe.angie.forms import angiogenesis_form, angiogenesis_form_no_proliferation, angiogenic_factor_form
 from mocafe.angie.base_classes import ClockChecker
-import src.forms
 from src.ioutils import write_parameters, dump_json, move_files_once_per_node, rmtree_if_exists_once_per_node
 from src.expressions import VesselReconstruction
 from src.angiometrics import compute_angiometrics
-from skimage import io
 import math 
 import random
 import os
@@ -130,10 +127,10 @@ def compute_mesh(spatial_dimension,
 
     # compute nx and ny based on R_c size
     R_c: float = sim_parameters.get_value('R_c')
-    nx: int = int(np.floor(Lx / (R_c * 0.5)))
-    ny: int = int(np.floor(Ly / (R_c * 0.5)))
+    nx: int = int(np.floor(Lx / (R_c * 0.1)))
+    ny: int = int(np.floor(Ly / (R_c * 0.1)))
     if spatial_dimension == 3:
-        nz: int = int(np.floor(Lz / (R_c * 0.5)))
+        nz: int = int(np.floor(Lz / (R_c * 0.1)))
         n = [nx, ny, nz]
     else:
         nz = 0
@@ -224,9 +221,12 @@ class CAMSimulation:
         self.out_folder_name = out_folder_name
 
         # proprieties related to source cells
-        self.source_cells_position_file = f"src_cells_positions/{egg_parameters['egg']}.npy"  # file containing source cells positions ADJUST ME AT YOUR WILL
-        self.n_source_cells = 300               # ADJUST ME AT YOUR WILL 
-        self.range_radius = 0.025               # ADJUST ME AT YOUR WILL
+        self.source_cells_positions_cache_folder = Path("src_cells_positions") # folder for source cells positions
+        self.source_cells_position_file = (                                    # file for source cells positions
+                self.source_cells_positions_cache_folder / Path(f"{egg_parameters['egg']}.npy")
+        )
+        # self.n_source_cells = 300               # Moved to self.sim_parameters with name "n_source_cells"
+        # self.range_radius = 0.025               # Moved to self.sim_parameters with name "source_cells_range"
         self.regenerate_source_cells_positions = regenerate_source_cells_positions
 
         # flags
@@ -301,11 +301,12 @@ class CAMSimulation:
 
     def init_source_cells(self):
         """
-        Explain here what I do
+        Initialize source cells. Given an egg, the positions are computed the first time and then stored in a
+        cache file.
         """
         # Check position file existance
         "Run the whole code in case source cells available positions aren't saved in a file yet"
-        if (not os.path.exists(self.source_cells_position_file)) or (self.regenerate_source_cells_positions):
+        if (not os.path.exists(self.source_cells_position_file)) or self.regenerate_source_cells_positions:
             
             # 1)  Get random positions for source cells
             #   Step 1: calculate the amount (n) of random point to start seeking for source cells feasible positions
@@ -320,26 +321,32 @@ class CAMSimulation:
             
             # 2)  Skim random points close to capillaries, maintain points far from capillaries
             #   Step 1: init and run Clockchecker to check capillary presence nearby random points (return True if so)
-            clock_checker = ClockChecker(self.mesh, self.range_radius, n_checkpoints=30)
+            clock_checker = ClockChecker(self.mesh,
+                                         self.sim_parameters.get_value("source_cells_range"),
+                                         n_checkpoints=30)
             clock_check_result = clock_checker.clock_check(source_cells_available_positions, self.c_old, lambda c_value: c_value > 0.)
             #   Step 2: gather distant points (correspondi to False value in clock_check_result)
             distant_source_cells_available_positions = source_cells_available_positions[~clock_check_result]
 
-            # 3)  Save the available positions for the source cells
-            "The positions are saved so that working on the same egg doesn't require continuos calculations of source cells positions"
-            np.save(self.source_cells_position_fileells_position_fileells_position_file, distant_source_cells_available_positions)
+            # 3)  Sample sources points
+            sources_points = random.sample(list(distant_source_cells_available_positions),
+                                           int(self.sim_parameters.get_value("n_source_cells")))
 
-            # 4)  Load positions and init source cells 
-            sources_points = random.sample(list(distant_source_cells_available_positions), self.n_source_cells)
-
+            # 4)  Save the available positions for the source cells
+            # The positions are saved so that working on the same egg doesn't require calculations
+            # of source cells positions every time
+            np.save(self.source_cells_position_file, distant_source_cells_available_positions)
         else:
             "if positions file already exists, just init source cells with those"
             # Load positions and init source cells 
-            available_positions = np.load(self.source_cells_position_file)
-            sources_points = random.sample(list(available_positions), self.n_source_cells)
+            sources_points = np.load(self.source_cells_position_file)
 
-        sources_map = af_sourcing.SourceMap(self.mesh, sources_points, self.sim_parameters, d=0.02)
-        self.sources_manager = af_sourcing.SourcesManager(sources_map, self.mesh, self.sim_parameters, d=0.02, T_min=0, T_s=1.)
+        sources_map = af_sourcing.SourceMap(self.mesh, sources_points, self.sim_parameters,
+                                            d=self.sim_parameters.get_value("source_cells_range"))
+        self.sources_manager = af_sourcing.SourcesManager(sources_map, self.mesh, self.sim_parameters,
+                                                          d=self.sim_parameters.get_value("source_cells_range"),
+                                                          T_min=self.sim_parameters.get_value("af_min"),
+                                                          T_s=self.sim_parameters.get_value("af_max"))
         
 
     def _generate_sim_parameters_independent_initial_conditions(self):
@@ -486,8 +493,7 @@ class CAMTimeSimulation(CAMSimulation):
                  slurm_job_id: int = None,
                  save_distributed_files_to: str or None = None,
                  spatial_dimension: int = 2,
-                 regenerate_source_cells_positions = False
-                 ):
+                 regenerate_source_cells_positions = False):
         """
         Initialize a Simulation Object.
 
@@ -515,7 +521,8 @@ class CAMTimeSimulation(CAMSimulation):
                          out_folder_name=out_folder_name,
                          out_folder_mode=out_folder_mode,
                          sim_rationale=sim_rationale,
-                         slurm_job_id=slurm_job_id)
+                         slurm_job_id=slurm_job_id,
+                         regenerate_source_cells_positions=regenerate_source_cells_positions)
 
         self.local_ureg = get_ureg_with_arbitrary_units(sim_parameters)
 
@@ -570,7 +577,7 @@ class CAMTimeSimulation(CAMSimulation):
          
         self._spatial_discretization()  # initialize function space
 
-        self.init_source_cells()  # generate source cells
+        # self.init_source_cells()  # moved inside self.generate_initial_condition
 
         self._generate_initial_conditions()  # generate initial condition
 
@@ -613,7 +620,8 @@ class CAMTimeSimulation(CAMSimulation):
         assert self.steps >= 0, "Simulation should have a positive number of steps"
 
     def _sim_mkdir(self):
-        super()._sim_mkdir_list(self.data_folder, self.report_folder, self.reproduce_folder)
+        super()._sim_mkdir_list(self.data_folder, self.report_folder, self.reproduce_folder,
+                                self.source_cells_positions_cache_folder)
         if self.save_distributed_files:
             # make directories for distributed save
             super()._sim_mkdir_list(self.distributed_data_folder, self.pvd_folder)
@@ -623,6 +631,8 @@ class CAMTimeSimulation(CAMSimulation):
         super()._generate_u_old()
         # generate initial conditions independent of sim parameters
         super()._generate_sim_parameters_independent_initial_conditions()
+        # generate source cells
+        super().init_source_cells()
         # generate initial conditions dependent from sim parameters
         super()._generate_sim_parameters_dependent_initial_conditions(self.sim_parameters)
 
@@ -811,8 +821,6 @@ class CAMTimeSimulation(CAMSimulation):
             self.af_old, self.c_old, self.mu_old = self.u_old.split()
             # assign new value to grad_af_old
             project(ufl.grad(self.af_old), target_func=self.grad_af_old)
-            # assign new value to phi
-            self._compute_ox()
 
             # update source field
             self.sources_manager.apply_sources(self.af_old)
