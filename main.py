@@ -20,7 +20,8 @@ logging.root.addHandler(ch)  # adding my handler
 logging.root.setLevel(logging.DEBUG)  # setting root logger level
 
 def main():
-    src.postprocessing.visualize_parameter_influence_on_angioparameters()
+    src.experiments.run_sim_413()
 
 if __name__ == "__main__":
     main()
+

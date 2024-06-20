@@ -339,6 +339,7 @@ class CAMSimulation:
         else:
             "if positions file already exists, just init source cells with those"
             # Load positions and init source cells 
+<<<<<<< Updated upstream
             sources_points = np.load(self.source_cells_position_file)
 
         sources_map = af_sourcing.SourceMap(self.mesh, sources_points, self.sim_parameters,
@@ -347,6 +348,13 @@ class CAMSimulation:
                                                           d=self.sim_parameters.get_value("source_cells_range"),
                                                           T_min=self.sim_parameters.get_value("af_min"),
                                                           T_s=self.sim_parameters.get_value("af_max"))
+=======
+            available_positions = np.load(self.source_cells_position_file)
+            sources_points = random.sample(list(available_positions), self.n_source_cells)
+
+        sources_map = af_sourcing.SourceMap(self.mesh, sources_points, self.sim_parameters, d=0.02)
+        self.sources_manager = af_sourcing.SourcesManager(sources_map, self.mesh, self.sim_parameters, d=0.02, T_min=0, T_s=10.)
+>>>>>>> Stashed changes
         
 
     def _generate_sim_parameters_independent_initial_conditions(self):
@@ -524,8 +532,6 @@ class CAMTimeSimulation(CAMSimulation):
                          slurm_job_id=slurm_job_id,
                          regenerate_source_cells_positions=regenerate_source_cells_positions)
 
-        self.local_ureg = get_ureg_with_arbitrary_units(sim_parameters)
-
         # specific properties
         self.steps: int = steps  # simulations steps
         self.save_rate: int = save_rate  # set how often writes the output
@@ -566,15 +572,14 @@ class CAMTimeSimulation(CAMSimulation):
         """
         Run simulation. Return True if a runtime error occurred, False otherwise.
         """
-        
         self._check_simulation_properties()  # Check class proprieties. Return error if something does not work.
-         
+
         self._sim_mkdir()  # create all simulation folders
-        
+
         self._fill_reproduce_folder()  # store current script in reproduce folder to keep track of the code
-         
+
         self._generate_mesh()  # generate mesh
-         
+
         self._spatial_discretization()  # initialize function space
 
         # self.init_source_cells()  # moved inside self.generate_initial_condition
@@ -584,7 +589,7 @@ class CAMTimeSimulation(CAMSimulation):
         self._write_files(0, write_mesh=True)  # write initial conditions
 
         self._angiometrics_snapshot(0)  # store angiometrics
-        
+
         self._time_iteration()  # run simulation in time
 
         self._end_simulation()  # conclude time iteration
@@ -734,10 +739,9 @@ class CAMTimeSimulation(CAMSimulation):
         u.x.array[:] = self.u_old.x.array
         # assign u_old to u
         af, c, mu = ufl.split(u)
-        # define test functionss
+        # define test functions
         v1, v2, v3 = ufl.TestFunctions(self.V)
         # build total form
-        # af_form uguale a quella del tutorial (mocafe.angie.form.af_form)
         af_form = angiogenic_factor_form(af, self.af_old, c, v1, self.sim_parameters, 
                                          alpha_T=self.sim_parameters.get_value("V_uc_af"), 
                                          D=self.sim_parameters.get_value("D_af"))
@@ -821,6 +825,11 @@ class CAMTimeSimulation(CAMSimulation):
             self.af_old, self.c_old, self.mu_old = self.u_old.split()
             # assign new value to grad_af_old
             project(ufl.grad(self.af_old), target_func=self.grad_af_old)
+<<<<<<< Updated upstream
+=======
+            # assign new value to phi
+            # self._compute_ox()
+>>>>>>> Stashed changes
 
             # update source field
             self.sources_manager.apply_sources(self.af_old)
@@ -858,9 +867,6 @@ class CAMTimeSimulation(CAMSimulation):
 
         super()._end_simulation()
 
-
-class CAMSquareSimulation:
-    pass
 
 # class RHAdaptiveSimulation(CAMTimeSimulation):
 #     def _solve_problem(self):

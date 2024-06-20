@@ -10,3 +10,8 @@ __pycache__
 *.e
 */.ipynb_checkpoints
 saved_sim_angiometrics
+jobids.txt
+*.pyc
+src_cells_positions/
+debugging_sim_413/
+new_413_parameter/

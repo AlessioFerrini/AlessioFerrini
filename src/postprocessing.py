@@ -18,8 +18,9 @@ def compose_angiometric_csv() -> None:
     egg_code = "w1_d0_CTRL_H1"
 
     # load csv containing the parameters value for each simulation
-    angiometrics_sim_folder = Path("saved_sim_angiometrics/")
-    convergence_csv = angiometrics_sim_folder / Path("convergence_2days.csv")
+    # angiometrics_sim_folder = Path("github/cam_mocafe/")
+    # convergence_csv = angiometrics_sim_folder / Path("convergence_2days.csv")
+    convergence_csv = Path("convergence_2days.csv")
     print(convergence_csv.resolve())
     convergence_df = pd.read_csv(convergence_csv)
 
@@ -32,8 +33,10 @@ def compose_angiometric_csv() -> None:
     # iterate on simulations
     for sim_id in simulation_ids:
         # get angiometrics json
-        angiometrics_json = angiometrics_sim_folder / Path(f"{egg_code}_2days_{str(sim_id).zfill(3)}/sim_info/"
-                                                           f"angiometrics.json")
+        # angiometrics_json = angiometrics_sim_folder / Path(f"{egg_code}_2days_{str(sim_id).zfill(3)}/sim_info/"
+        #                                                    f"angiometrics.json")
+        angiometrics_json = Path(f"saved_sim/no_incremental_sim/{egg_code}_2days_{str(sim_id).zfill(3)}/sim_info/"
+                                                            f"angiometrics.json")
         # load angiometrics dict
         with open(angiometrics_json, "r") as infile:
             angiometrics_dict = json.load(infile)
@@ -68,7 +71,7 @@ def compose_angiometric_csv() -> None:
     output_df = pd.concat([convergence_df, pd.DataFrame(output_list)], axis=1)
 
     # save
-    output_df.to_csv(f"out_postprocessing/angiometrics_{egg_code}.csv", index=False)
+    output_df.to_csv(f"out_postprocessing/no_incremental_ang/angiometrics_{egg_code}.csv", index=False)
 
 
 def visualize_parameter_influence_on_angioparameters():
