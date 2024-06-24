@@ -127,10 +127,10 @@ def compute_mesh(spatial_dimension,
 
     # compute nx and ny based on R_c size
     R_c: float = sim_parameters.get_value('R_c')
-    nx: int = int(np.floor(Lx / (R_c * 0.1)))
-    ny: int = int(np.floor(Ly / (R_c * 0.1)))
+    nx: int = int(np.floor(Lx / (R_c * 0.5)))
+    ny: int = int(np.floor(Ly / (R_c * 0.5)))
     if spatial_dimension == 3:
-        nz: int = int(np.floor(Lz / (R_c * 0.1)))
+        nz: int = int(np.floor(Lz / (R_c * 0.5)))
         n = [nx, ny, nz]
     else:
         nz = 0
@@ -307,40 +307,64 @@ class CAMSimulation:
         # Check position file existance
         "Run the whole code in case source cells available positions aren't saved in a file yet"
         if (not os.path.exists(self.source_cells_position_file)) or self.regenerate_source_cells_positions:
-            
-            # 1)  Get random positions for source cells
-            #   Step 1: calculate the amount (n) of random point to start seeking for source cells feasible positions
-            Lx = self.mesh_parameters.get_value("Lx") 
-            Ly = self.mesh_parameters.get_value("Ly") 
-            R_c = self.sim_parameters.get_value("R_c") 
-            n = int((Lx * Ly) / (math.pi * (R_c**2)))
-            #   Step 2: get n random points in the mesh
-            x_coords = np.random.uniform(0, Lx, n)
-            y_coords = np.random.uniform(0, Ly, n)
-            source_cells_available_positions = np.column_stack((x_coords, y_coords, np.zeros(n)))
-            
+            # 1) On process 0, get random positions for source cells
+            if rank == 0:
+                #   Step 1: calculate the amount (n) of random point to start seeking for source cells feasible positions
+                Lx = self.mesh_parameters.get_value("Lx")
+                Ly = self.mesh_parameters.get_value("Ly")
+                R_c = self.sim_parameters.get_value("R_c")
+                n = int((Lx * Ly) / (math.pi * (R_c**2)))
+
+                #   Step 2: get n random points in the mesh
+                x_coords = np.random.uniform(0, Lx, n)
+                y_coords = np.random.uniform(0, Ly, n)
+                source_cells_available_positions = np.column_stack((x_coords, y_coords, np.zeros(n)))
+            else:
+                source_cells_available_positions = None
+
+            # Broadcast positions on all processes
+            source_cells_available_positions = comm_world.bcast(source_cells_available_positions, 0)
+
             # 2)  Skim random points close to capillaries, maintain points far from capillaries
             #   Step 1: init and run Clockchecker to check capillary presence nearby random points (return True if so)
             clock_checker = ClockChecker(self.mesh,
                                          self.sim_parameters.get_value("source_cells_range"),
                                          n_checkpoints=30)
-            clock_check_result = clock_checker.clock_check(source_cells_available_positions, self.c_old, lambda c_value: c_value > 0.)
-            #   Step 2: gather distant points (correspondi to False value in clock_check_result)
-            distant_source_cells_available_positions = source_cells_available_positions[~clock_check_result]
+            clock_check_result_local = clock_checker.clock_check(source_cells_available_positions, self.c_old,
+                                                                 lambda c_value: c_value > 0.)
 
-            # 3)  Sample sources points
-            sources_points = random.sample(list(distant_source_cells_available_positions),
-                                           int(self.sim_parameters.get_value("n_source_cells")))
+            # gather clock check result
+            clock_check_result_gathered = np.array(comm_world.gather(clock_check_result_local, 0))
+            # get points false on all processes
+            if rank == 0:
+                clock_check_result_global = np.logical_or.reduce(clock_check_result_gathered, axis=0)
+            else:
+                clock_check_result_global = None
+            # bcast result
+            clock_check_result_global = comm_world.bcast(clock_check_result_global, 0)
 
-            # 4)  Save the available positions for the source cells
+            #   Step 2: gather distant points (correspond to False value in clock_check_result)
+            distant_source_cells_available_positions = source_cells_available_positions[~clock_check_result_global]
+
+            # 3)  Save the available positions for the source cells
             # The positions are saved so that working on the same egg doesn't require calculations
             # of source cells positions every time
-            np.save(self.source_cells_position_file, distant_source_cells_available_positions)
+            if rank == 0:
+                np.save(self.source_cells_position_file, distant_source_cells_available_positions)
         else:
             "if positions file already exists, just init source cells with those"
             # Load positions and init source cells 
-            sources_points = np.load(self.source_cells_position_file)
+            distant_source_cells_available_positions = np.load(self.source_cells_position_file)
 
+        # 4)  Sample sources points
+        if rank == 0:
+            sources_points = random.sample(list(distant_source_cells_available_positions),
+                                           int(self.sim_parameters.get_value("n_source_cells")))
+        else:
+            sources_points = None
+        sources_points = comm_world.bcast(sources_points, 0)
+
+        # 5) Generate sources map
         sources_map = af_sourcing.SourceMap(self.mesh, sources_points, self.sim_parameters,
                                             d=self.sim_parameters.get_value("source_cells_range"))
         self.sources_manager = af_sourcing.SourcesManager(sources_map, self.mesh, self.sim_parameters,
