@@ -271,38 +271,65 @@ def compute_initial_conditions():
 def run_sim_413():
     # Inspired from sprouting from param sampling; load 413 param; 
     sim_parameters, eggs_parameters, slurm_job_id, distributed_data_folder = preamble()
-    sim_parameters_path = "parameters/sim_parameters_413.csv" #debugging_sim_413/sim_parameters_413.csv
+    sim_parameters_path = "debugging_sim_413/sim_parameters_413.csv" #debugging_sim_413/sim_parameters_413.csv
     egg_code = "w1_d0_CTRL_H1" 
 
     # Load simulation parameters from CSV file
-    sim_parameters_df = pd.read_csv(sim_parameters_path, index_col='name')
+    # sim_parameters_df = pd.read_csv(sim_parameters_path, index_col='name')
 
-    # Set precise values for parameters from the CSV file
-    # V_pH_af_val = float(sim_parameters_df.loc["V_pH_af", "sim_value"])
-    V_uc_af_val = float(sim_parameters_df.loc["V_uc_af", "sim_value"])
-    epsilon_val = float(sim_parameters_df.loc["epsilon", "sim_value"])
-    alpha_pc_val = float(sim_parameters_df.loc["alpha_pc", "sim_value"])
-    M_val = float(sim_parameters_df.loc["M", "sim_value"])
-    dt = 1
+    # # Set precise values for parameters from the CSV file
+    # # V_pH_af_val = float(sim_parameters_df.loc["V_pH_af", "sim_value"])
+    # V_uc_af_val = float(sim_parameters_df.loc["V_uc_af", "sim_value"])
+    # epsilon_val = float(sim_parameters_df.loc["epsilon", "sim_value"])
+    # alpha_pc_val = float(sim_parameters_df.loc["alpha_pc", "sim_value"])
+    # M_val = float(sim_parameters_df.loc["M", "sim_value"])
+    # dt = 1
 
     # Set parameters
-    # sim_parameters.set_value("V_pH_af", V_pH_af_val)
-    sim_parameters.set_value("V_uc_af", V_uc_af_val)
-    sim_parameters.set_value("epsilon", epsilon_val)
-    sim_parameters.set_value("alpha_pc", alpha_pc_val)
-    sim_parameters.set_value("M", M_val)
-    sim_parameters.set_value("dt", dt)
+    R_c = sim_parameters.get_value("R_c")
+    # sim_parameters.set_value("V_uc_af", V_uc_af_val)  #
+    # sim_parameters.set_value("epsilon", epsilon_val)
+    # sim_parameters.set_value("alpha_pc", alpha_pc_val)
+    # sim_parameters.set_value("M", M_val)
+    # sim_parameters.set_value("dt", dt)                        # originals from tutorial
+    # sim_parameters.set_value("af_max", 1.)                     lattice units = 1.25 um
+    sim_parameters.set_value("D_af", 25)                         #  100       lattice units^2 / time units
+    sim_parameters.set_value("M", 0.25)                          #    1       lattice units^2 / time units
+    sim_parameters.set_value("chi", 60)                          #  240       lattice units^2 / time units
+    sim_parameters.set_value("source_cells_range", 20)           #   20       lattice units
+    sim_parameters.set_value("epsilon", 0.5)                     #    1       lattice units
+    sim_parameters.set_value("min_tipcell_distance", 40)#4 * R_c)    #   16       lattice units
+    sim_parameters.set_value("G_M", 0.06)                        #    0.03    lattice units^-1
+    sim_parameters.set_value("G_m", 0.02)                        #    0.01    lattice units^-1 
+    sim_parameters.set_value("V_uc_af", 6.25)                    #    6.25    time units^-1
+    sim_parameters.set_value("alpha_p", 1.401)                   #    1.401   time units^-1
+    sim_parameters.set_value("T_s", 1.)                          #    1       adim
+    sim_parameters.set_value("T_p", 0.3)                         #    0.3     adim 
+    sim_parameters.set_value("T_c", 0.055)                       #    0.055   adim   
+    sim_parameters.set_value("af_min", 0)                        #    0       adim
+    sim_parameters.set_value("phi_min", -1)                      #   -1       adim
+    sim_parameters.set_value("phi_max", 1)                       #    1       adim
+    sim_parameters.set_value("n_steps", 100)                     #  100       adim
+    sim_parameters.set_value("n_source_cells", 1100)             #  250       adim    
+    # sim_parameters.set_value("L_x", 3.75e-1)
+    # sim_parameters.set_value("L_y", 3.75e-1)
+    # sim_parameters.set_value("n_x", 3.75e-1)
+    # sim_parameters.set_value("n_y", 3.75e-1)
+    # sim_parameters.set_value("initial_vessel_width", 18.75)
+    sim_parameters.set_value("phi_th", 0)
+    # sim.parameters.set_value("R_c", 5.0e-3)
+
 
     # Generate sim object
     sim = CAMTimeSimulation(sim_parameters=sim_parameters,
                             egg_parameters=eggs_parameters["w1_d0_CTRL_H1"],
                             slurm_job_id=slurm_job_id,
-                            steps=int(1 / dt),
-                            save_rate=1,  # modified to save one step
-                            out_folder_name=f"debugging_sim_413/sprouting_at_last",
-                            sim_rationale=f"Testing combination: V_uc_af: {V_uc_af_val}; epsilon: {epsilon_val}; "
-                                          f"alpha_pc: {alpha_pc_val}; M: {M_val}",
-                            save_distributed_files_to=distributed_data_folder)
+                            steps=int(16),
+                            save_rate=1,  
+                            out_folder_name=f"debugging_sim_413/sprouting_at_last_autod",
+                            sim_rationale=f"Testing Travasso parameters",
+                            save_distributed_files_to=distributed_data_folder,
+                            regenerate_source_cells_positions=False)
     
     # Run simulation
     sim.run()

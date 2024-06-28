@@ -23,7 +23,8 @@ import mocafe.fenut.mansimdata as mansim
 from mocafe.fenut.fenut import get_colliding_cells_for_points
 from mocafe.math import project
 from mocafe.fenut.parameters import Parameters
-from mocafe.angie import af_sourcing
+# from mocafe.angie import af_sourcing
+from src import af_sourcing
 from mocafe.angie.tipcells import TipCellManager, load_tip_cells_from_json
 from mocafe.angie.forms import angiogenesis_form, angiogenesis_form_no_proliferation, angiogenic_factor_form
 from mocafe.angie.base_classes import ClockChecker
@@ -127,10 +128,10 @@ def compute_mesh(spatial_dimension,
 
     # compute nx and ny based on R_c size
     R_c: float = sim_parameters.get_value('R_c')
-    nx: int = int(np.floor(Lx / (R_c * 0.5)))
-    ny: int = int(np.floor(Ly / (R_c * 0.5)))
+    nx: int = int(np.floor(Lx / (R_c * 0.25)))
+    ny: int = int(np.floor(Ly / (R_c * 0.25)))
     if spatial_dimension == 3:
-        nz: int = int(np.floor(Lz / (R_c * 0.5)))
+        nz: int = int(np.floor(Lz / (R_c * 0.25)))
         n = [nx, ny, nz]
     else:
         nz = 0
@@ -205,10 +206,8 @@ class CAMSimulation:
         self.egg_parameters: Dict = egg_parameters  # patient parameters
         self.lsp = {                                      # linear solver parameters
             "ksp_type": "gmres",
-            "pc_type": "asm",
-            "ksp_monitor": None,
-            "ksp_atol": 1e-6,
-            "ksp_rtol": 1e-6
+            "pc_type": "gasm",
+            "ksp_monitor": None
         }
 
         # proprieties
@@ -285,7 +284,7 @@ class CAMSimulation:
     def _spatial_discretization(self, mesh: dolfinx.mesh.Mesh = None):
         logger.info(f"Generating spatial discretization")
         if mesh is None:
-            self.V = fu.get_mixed_function_space(self.mesh, 3)
+            self.V = fu.get_mixed_function_space(self.mesh, 3, "P", 1)
             self.vec_V = dolfinx.fem.FunctionSpace(self.mesh, ufl.VectorElement("P", self.mesh.ufl_cell(), 1))
         else:
             self.V = fu.get_mixed_function_space(mesh, 3)
@@ -345,7 +344,24 @@ class CAMSimulation:
 
             #   Step 2: gather distant points (correspond to False value in clock_check_result)
             distant_source_cells_available_positions = source_cells_available_positions[~clock_check_result_global]
-
+            
+            ###################################################################
+            # Debug problematic super-imposed sc
+            spaced_sc_list = []
+            for position in distant_source_cells_available_positions:
+                if spaced_sc_list(0) == None:
+                    spaced_sc_list.append(position)
+                else:
+                    for old_position in spaced_sc_list:
+                        too_close_list = 0
+                        sc_distance = math.sqrt((position[0] - old_position[0]) ** 2 + (position[1] - old_position[1]) ** 2)
+                        if sc_distance < self.sim_parameters.get_value("source_cells_range")
+                            too_close_list += 1                                # make this part better please
+                if too_close_list == 0  
+                            spaced_sc_list.append(position)
+            distant_source_cells_available_positions = spaced_sc_list
+            print(f"SOURCE CELLS POSITIONS = {len(distant_source_cells_available_positions)}")
+            ###################################################################
             # 3)  Save the available positions for the source cells
             # The positions are saved so that working on the same egg doesn't require calculations
             # of source cells positions every time
@@ -353,7 +369,7 @@ class CAMSimulation:
                 np.save(self.source_cells_position_file, distant_source_cells_available_positions)
         else:
             "if positions file already exists, just init source cells with those"
-            # Load positions and init source cells 
+            # Load positions
             distant_source_cells_available_positions = np.load(self.source_cells_position_file)
 
         # 4)  Sample sources points
@@ -363,14 +379,15 @@ class CAMSimulation:
         else:
             sources_points = None
         sources_points = comm_world.bcast(sources_points, 0)
+        logger.info(f"DEBUG: n source cells: {self.sim_parameters.get_value('n_source_cells')}")
 
         # 5) Generate sources map
         sources_map = af_sourcing.SourceMap(self.mesh, sources_points, self.sim_parameters,
                                             d=self.sim_parameters.get_value("source_cells_range"))
         self.sources_manager = af_sourcing.SourcesManager(sources_map, self.mesh, self.sim_parameters,
-                                                          d=self.sim_parameters.get_value("source_cells_range"),
-                                                          T_min=self.sim_parameters.get_value("af_min"),
-                                                          T_s=self.sim_parameters.get_value("af_max"))
+                                                          d=float(self.sim_parameters.get_value("source_cells_range")),
+                                                          T_min=float(self.sim_parameters.get_value("af_min")),
+                                                          T_s=float(self.sim_parameters.get_value("af_max")))
         
 
     def _generate_sim_parameters_independent_initial_conditions(self):
@@ -378,7 +395,8 @@ class CAMSimulation:
         Generate initial conditions not depending on the simulation parameters
         """
         # capillaries
-        compute_c0(self.c_old, self.egg_parameters, self.mesh_parameters)
+         #compute_c0(self.c_old, self.egg_parameters, self.mesh_parameters)
+        self.c_old.interpolate(lambda x: np.where(x[0] < (self.mesh_parameters.get_value("Lx") / 10), 1., -1.))
 
         # t_c_f_function (dynamic tip cell position)
         logger.info(f"Computing t_c_f_function...")
@@ -659,7 +677,7 @@ class CAMTimeSimulation(CAMSimulation):
 
     def _write_files(self, t: int, write_mesh: bool = False):
         for fun, name, f_file in zip([self.af_old, self.c_old, self.grad_af_old, self.t_c_f_function],
-                                     ["af", "c", "grad_af", "ox", "tipcells"],
+                                     ["af", "c", "grad_af", "tipcells"],
                                      [self.af_file, self.c_file, self.grad_af_file, self.tipcells_file]):
             # log
             logger.info(f"Writing {name} file...")
@@ -758,11 +776,11 @@ class CAMTimeSimulation(CAMSimulation):
         # define test functions
         v1, v2, v3 = ufl.TestFunctions(self.V)
         # build total form
-        af_form = angiogenic_factor_form(af, self.af_old, c, v1, self.sim_parameters, 
-                                         alpha_T=self.sim_parameters.get_value("V_uc_af"), 
-                                         D=self.sim_parameters.get_value("D_af"))
+        af_form = angiogenic_factor_form(af, self.af_old, c, v1, self.sim_parameters,      # self.c_old
+                                         alpha_T=float(self.sim_parameters.get_value("V_uc_af")), 
+                                         D=float(self.sim_parameters.get_value("D_af")))
         capillaries_form = angiogenesis_form(
-            c, self.c_old, mu, self.mu_old, v2, v3, self.af_old, self.sim_parameters)
+            c, self.c_old, mu, self.mu_old, v2, v3, af, self.sim_parameters)            # self.af_old
         form = af_form + capillaries_form
 
         ## Step 2: define problem
@@ -774,7 +792,7 @@ class CAMTimeSimulation(CAMSimulation):
         # Set Newton solver options
         self.solver.atol = 1e-6
         self.solver.rtol = 1e-6
-        # self.solver.convergence_criterion = "incremental"
+        self.solver.convergence_criterion = "incremental"
         self.solver.max_it = 100
         self.solver.report = True  # report iterations
         # set options for krylov solver
@@ -800,6 +818,7 @@ class CAMTimeSimulation(CAMSimulation):
 
             # turn off near sources
             self.sources_manager.remove_sources_near_vessels(self.c_old)
+            print(f"I Removed sources cells")
 
             # activate tip cells
             self.tip_cell_manager.activate_tip_cell(self.c_old, self.af_old, self.grad_af_old, step)
@@ -817,7 +836,7 @@ class CAMTimeSimulation(CAMSimulation):
             # store tip cells in fenics function and json file
             logger.debug(f"Saving incremental tip cells")
             self.t_c_f_function = self.tip_cell_manager.get_latest_tip_cell_function()
-            self.t_c_f_function.x.scatter_forward()
+            # self.t_c_f_function.x.scatter_forward()
             self.tip_cell_manager.save_incremental_tip_cells(f"{self.report_folder}/incremental_tipcells.json", step)
 
             # solve
@@ -839,11 +858,13 @@ class CAMTimeSimulation(CAMSimulation):
             self.u_old.x.array[:] = u.x.array
             self.u_old.x.scatter_forward()
             self.af_old, self.c_old, self.mu_old = self.u_old.split()
-            # assign new value to grad_af_old
-            project(ufl.grad(self.af_old), target_func=self.grad_af_old)
+           
 
             # update source field
             self.sources_manager.apply_sources(self.af_old)
+
+             # assign new value to grad_af_old
+            project(ufl.grad(self.af_old), target_func=self.grad_af_old)
 
             # save
             if ((step % self.save_rate == 0) or
