@@ -818,9 +818,9 @@ class CAMTimeSimulation(CAMSimulation):
 
             # turn off near sources
             #source_cells_range_name = self.sim_parameters(source_cells_range)
-            self.sources_manager.remove_sources_near_vessels(self.c_old, self.sim_parameters.source_cells_range)
+            self.sources_manager.remove_sources_near_vessels(self.c_old, sim_parameters=self.sim_parameters)
             print(f"I removed sources cells")
-            exit(0)
+            
             # activate tip cells
             self.tip_cell_manager.activate_tip_cell(self.c_old, self.af_old, self.grad_af_old, step)
 
