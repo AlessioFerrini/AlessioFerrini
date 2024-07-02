@@ -324,7 +324,7 @@ def run_sim_413():
     sim = CAMTimeSimulation(sim_parameters=sim_parameters,
                             egg_parameters=eggs_parameters["w1_d0_CTRL_H1"],
                             slurm_job_id=slurm_job_id,
-                            steps=int(15),
+                            steps=int(10),
                             save_rate=1,  
                             out_folder_name=f"debugging_sim_413/sprouting_at_last_autod",
                             sim_rationale=f"Testing Travasso parameters",
