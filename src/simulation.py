@@ -349,7 +349,7 @@ class CAMSimulation:
             # Debug problematic super-imposed sc
             spaced_sc_list = []
             for position in distant_source_cells_available_positions:
-                if spaced_sc_list(0) == None:
+                if spaced_sc_list[0] == None:
                     spaced_sc_list.append(position)
                 else:
                     for old_position in spaced_sc_list:
