@@ -347,20 +347,20 @@ class CAMSimulation:
             
             ###################################################################
             # Debug problematic super-imposed sc
-            spaced_sc_list = []
-            for position in distant_source_cells_available_positions:
-                if spaced_sc_list[0] == None:
-                    spaced_sc_list.append(position)
-                else:
-                    for old_position in spaced_sc_list:
-                        too_close_list = 0
-                        sc_distance = math.sqrt((position[0] - old_position[0]) ** 2 + (position[1] - old_position[1]) ** 2)
-                        if sc_distance < self.sim_parameters.get_value("source_cells_range"):
-                            too_close_list += 1                                # make this part better please
-                if too_close_list == 0:  
-                            spaced_sc_list.append(position)
-            distant_source_cells_available_positions = spaced_sc_list
-            print(f"SOURCE CELLS POSITIONS = {len(distant_source_cells_available_positions)}")
+            # spaced_sc_list = []
+            # for position in distant_source_cells_available_positions:
+            #     if spaced_sc_list[0] == None:
+            #         spaced_sc_list.append(position)
+            #     else:
+            #         for old_position in spaced_sc_list:
+            #             too_close_list = 0
+            #             sc_distance = math.sqrt((position[0] - old_position[0]) ** 2 + (position[1] - old_position[1]) ** 2)
+            #             if sc_distance < self.sim_parameters.get_value("source_cells_range"):
+            #                 too_close_list += 1                                # make this part better please
+            #     if too_close_list == 0:  
+            #                 spaced_sc_list.append(position)
+            # distant_source_cells_available_positions = spaced_sc_list
+            # print(f"SOURCE CELLS POSITIONS = {len(distant_source_cells_available_positions)}")
             ###################################################################
             # 3)  Save the available positions for the source cells
             # The positions are saved so that working on the same egg doesn't require calculations
