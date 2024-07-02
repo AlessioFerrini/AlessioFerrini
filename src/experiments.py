@@ -286,7 +286,7 @@ def run_sim_413():
     # dt = 1
 
     # Set parameters
-    R_c = sim_parameters.get_value("R_c")
+    #R_c = sim_parameters.get_value("R_c")
     # sim_parameters.set_value("V_uc_af", V_uc_af_val)  #
     # sim_parameters.set_value("epsilon", epsilon_val)
     # sim_parameters.set_value("alpha_pc", alpha_pc_val)
@@ -296,9 +296,9 @@ def run_sim_413():
     sim_parameters.set_value("D_af", 25)                         #  100       lattice units^2 / time units
     sim_parameters.set_value("M", 0.25)                          #    1       lattice units^2 / time units
     sim_parameters.set_value("chi", 60)                          #  240       lattice units^2 / time units
-    sim_parameters.set_value("source_cells_range", 20)           #   20       lattice units
+    sim_parameters.set_value("source_cells_range", 10)           #   20       lattice units
     sim_parameters.set_value("epsilon", 0.5)                     #    1       lattice units
-    sim_parameters.set_value("min_tipcell_distance", 40)#4 * R_c)    #   16       lattice units
+    sim_parameters.set_value("min_tipcell_distance", 8)#4 * R_c) #   16       lattice units
     sim_parameters.set_value("G_M", 0.06)                        #    0.03    lattice units^-1
     sim_parameters.set_value("G_m", 0.02)                        #    0.01    lattice units^-1 
     sim_parameters.set_value("V_uc_af", 6.25)                    #    6.25    time units^-1
@@ -324,7 +324,7 @@ def run_sim_413():
     sim = CAMTimeSimulation(sim_parameters=sim_parameters,
                             egg_parameters=eggs_parameters["w1_d0_CTRL_H1"],
                             slurm_job_id=slurm_job_id,
-                            steps=int(16),
+                            steps=int(25),
                             save_rate=1,  
                             out_folder_name=f"debugging_sim_413/sprouting_at_last_autod",
                             sim_rationale=f"Testing Travasso parameters",

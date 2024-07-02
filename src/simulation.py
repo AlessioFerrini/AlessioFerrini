@@ -355,9 +355,9 @@ class CAMSimulation:
                     for old_position in spaced_sc_list:
                         too_close_list = 0
                         sc_distance = math.sqrt((position[0] - old_position[0]) ** 2 + (position[1] - old_position[1]) ** 2)
-                        if sc_distance < self.sim_parameters.get_value("source_cells_range")
+                        if sc_distance < self.sim_parameters.get_value("source_cells_range"):
                             too_close_list += 1                                # make this part better please
-                if too_close_list == 0  
+                if too_close_list == 0:  
                             spaced_sc_list.append(position)
             distant_source_cells_available_positions = spaced_sc_list
             print(f"SOURCE CELLS POSITIONS = {len(distant_source_cells_available_positions)}")
@@ -817,9 +817,10 @@ class CAMTimeSimulation(CAMSimulation):
             t += dt
 
             # turn off near sources
-            self.sources_manager.remove_sources_near_vessels(self.c_old)
-            print(f"I Removed sources cells")
-
+            #source_cells_range_name = self.sim_parameters(source_cells_range)
+            self.sources_manager.remove_sources_near_vessels(self.c_old, self.sim_parameters.source_cells_range)
+            print(f"I removed sources cells")
+            exit(0)
             # activate tip cells
             self.tip_cell_manager.activate_tip_cell(self.c_old, self.af_old, self.grad_af_old, step)
 
